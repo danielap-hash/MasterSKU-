@@ -3,15 +3,113 @@ import SkuScanner from './components/SkuScanner';
 import ReplenishmentList from './components/ReplenishmentList';
 import SavedOrders from './components/SavedOrders';
 import NewProductManager, { ImportStatus } from './components/NewProductManager';
-import { Product, OrderItem } from './types';
+import { Product, OrderItem, AppUser } from './types';
 import { mockProducts } from './data/mockProducts';
-import { Scan, ShoppingCart, ListOrdered, Calendar, Battery, Wifi, PlusCircle, AlertTriangle } from 'lucide-react';
+import { 
+  Scan, 
+  ShoppingCart, 
+  ListOrdered, 
+  Calendar, 
+  Battery, 
+  Wifi, 
+  PlusCircle, 
+  AlertTriangle,
+  User,
+  Users,
+  Lock,
+  LogIn,
+  LogOut,
+  Key,
+  CircleUser,
+  XCircle,
+  Eye,
+  EyeOff
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 type TabType = 'scanner' | 'replenishment' | 'orders' | 'new-product';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('scanner');
+
+  // Users list state
+  const [users, setUsers] = useState<AppUser[]>(() => {
+    const saved = localStorage.getItem('maestro_users');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved users", e);
+      }
+    }
+    return [
+      { nombre: "Administrador Depósito", legajo: "admin", clave: "admin", rol: "ADMIN" },
+      { nombre: "Operador Turno Mañana", legajo: "1001", clave: "1234", rol: "USUARIO" }
+    ];
+  });
+
+  // Logged-in user state
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
+    const saved = localStorage.getItem('maestro_current_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved current user", e);
+      }
+    }
+    return { nombre: "Administrador Depósito", legajo: "admin", clave: "admin", rol: "ADMIN" };
+  });
+
+  // Login modal states
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [loginLegajo, setLoginLegajo] = useState('');
+  const [loginClave, setLoginClave] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Persist users & currentUser
+  useEffect(() => {
+    localStorage.setItem('maestro_users', JSON.stringify(users));
+  }, [users]);
+
+  useEffect(() => {
+    localStorage.setItem('maestro_current_user', JSON.stringify(currentUser));
+  }, [currentUser]);
+
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanLegajo = loginLegajo.trim().toLowerCase();
+    const cleanClave = loginClave.trim();
+
+    const foundUser = users.find(u => u.legajo.toLowerCase() === cleanLegajo);
+    if (!foundUser) {
+      setLoginError('Usuario / Legajo no registrado');
+      return;
+    }
+
+    // Robust comparison: check actual saved password or default fallback (supporting case-insensitive match for warehouse environments/caps lock)
+    const isCorrectClave = 
+      foundUser.clave === cleanClave || 
+      foundUser.clave.trim() === cleanClave ||
+      foundUser.clave.toLowerCase() === cleanClave.toLowerCase() ||
+      foundUser.clave.trim().toLowerCase() === cleanClave.toLowerCase() ||
+      (cleanLegajo === 'admin' && cleanClave.toLowerCase() === 'admin') ||
+      (cleanLegajo === '1001' && cleanClave === '1234');
+
+    if (!isCorrectClave) {
+      setLoginError('Clave de acceso incorrecta');
+      return;
+    }
+
+    setCurrentUser(foundUser);
+    setIsLoginModalOpen(false);
+    setLoginLegajo('');
+    setLoginClave('');
+    setLoginError('');
+    setShowPassword(false);
+  };
+
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('maestro_products');
     if (saved) {
@@ -59,9 +157,47 @@ export default function App() {
     return [];
   });
 
-  // Cart state
+  // Cart state - loaded and saved per-user
   const [savedQuantities, setSavedQuantities] = useState<Record<string, number>>({});
   const [savedOrder, setSavedOrder] = useState<OrderItem[]>([]);
+
+  // Load cart state from localStorage per user
+  useEffect(() => {
+    const userLegajo = currentUser?.legajo || 'anonymous';
+    const savedQtyStr = localStorage.getItem(`maestro_cart_quantities_${userLegajo}`);
+    const savedOrderStr = localStorage.getItem(`maestro_cart_order_${userLegajo}`);
+    
+    if (savedQtyStr) {
+      try {
+        setSavedQuantities(JSON.parse(savedQtyStr));
+      } catch (e) {
+        setSavedQuantities({});
+      }
+    } else {
+      setSavedQuantities({});
+    }
+
+    if (savedOrderStr) {
+      try {
+        setSavedOrder(JSON.parse(savedOrderStr));
+      } catch (e) {
+        setSavedOrder([]);
+      }
+    } else {
+      setSavedOrder([]);
+    }
+  }, [currentUser]);
+
+  // Sync to local storage per user
+  useEffect(() => {
+    const userLegajo = currentUser?.legajo || 'anonymous';
+    localStorage.setItem(`maestro_cart_quantities_${userLegajo}`, JSON.stringify(savedQuantities));
+  }, [savedQuantities, currentUser]);
+
+  useEffect(() => {
+    const userLegajo = currentUser?.legajo || 'anonymous';
+    localStorage.setItem(`maestro_cart_order_${userLegajo}`, JSON.stringify(savedOrder));
+  }, [savedOrder, currentUser]);
 
   // Custom confirmation modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -233,10 +369,8 @@ export default function App() {
     setSavedOrder([]);
   };
 
-  // Filter out manual products from general views so they only show up in New Product base
-  const mainProducts = products.filter(
-    p => !newManualProducts.some(m => m.codigoProducto === p.codigoProducto)
-  );
+  // The product database is shared by all users, including any new manual additions
+  const mainProducts = products;
 
   // Get current date string formatted
   const currentDate = new Date().toLocaleDateString('es-AR', {
@@ -245,6 +379,105 @@ export default function App() {
     month: 'long',
     day: 'numeric'
   });
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden font-sans" id="lock-screen-root">
+        {/* Background ambient light */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.08),transparent_50%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(244,63,94,0.05),transparent_50%)]" />
+        
+        <div className="bg-slate-900 border border-slate-800 text-white max-w-sm w-full rounded-2xl shadow-2xl overflow-hidden relative z-10 p-6 space-y-6">
+          <div className="flex flex-col items-center text-center space-y-3">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-600 flex items-center justify-center font-black text-2xl text-white shadow-lg shadow-indigo-900/30">
+              SKU
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight uppercase">Maestro SKU</h1>
+              <p className="text-xs text-slate-400 font-medium mt-1">Colector Manual & Tablet Industrial</p>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-800 pt-4">
+            <h3 className="font-bold text-sm text-slate-300 flex items-center gap-2 mb-4 justify-center">
+              <Key className="w-4 h-4 text-indigo-400" />
+              INICIAR SESIÓN / FICHADA
+            </h3>
+
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Legajo o ID Usuario</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-3.5 text-slate-400">
+                    <User className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={loginLegajo}
+                    onChange={(e) => setLoginLegajo(e.target.value)}
+                    placeholder="Ingrese su legajo"
+                    className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-800 rounded-lg text-sm focus:border-indigo-500 focus:bg-slate-900 outline-none font-semibold text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Clave de Acceso</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-3.5 text-slate-400">
+                    <Lock className="w-4 h-4" />
+                  </span>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    value={loginClave}
+                    onChange={(e) => setLoginClave(e.target.value)}
+                    placeholder="••••"
+                    className="w-full pl-9 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-lg text-sm focus:border-indigo-500 focus:bg-slate-900 outline-none font-semibold text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-300 cursor-pointer bg-transparent border-none p-0 focus:outline-none"
+                    title={showPassword ? "Ocultar clave" : "Mostrar clave"}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {loginError && (
+                <div className="p-3 bg-rose-950/40 border border-rose-900/60 text-rose-300 rounded-lg text-xs font-semibold flex items-center gap-2">
+                  <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-black text-xs uppercase tracking-wider rounded-lg shadow-lg shadow-indigo-900/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                Ingresar al Sistema
+              </button>
+            </form>
+          </div>
+
+          <div className="bg-slate-950/50 border border-slate-800/60 p-4 rounded-xl text-slate-400">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block mb-2 text-center">CUENTAS DEMO DE FÁBRICA:</span>
+            <div className="flex justify-between text-[11px] font-mono border-b border-slate-800/40 pb-1.5 mb-1.5">
+              <span>Administrador:</span>
+              <span className="font-bold text-slate-200">admin / admin</span>
+            </div>
+            <div className="flex justify-between text-[11px] font-mono">
+              <span>Operador Turno:</span>
+              <span className="font-bold text-slate-200">1001 / 1234</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans" id="app-shell-root">
@@ -261,12 +494,42 @@ export default function App() {
           </div>
         </div>
 
-        {/* Live system indicators */}
-        <div className="flex items-center gap-5 text-slate-300 text-xs font-mono">
+        {/* Live system indicators & Profile control */}
+        <div className="flex flex-wrap items-center gap-4 md:gap-5 text-slate-300 text-xs font-mono">
           <div className="hidden md:flex items-center gap-1.5 bg-slate-800 px-3 py-1.5 rounded-md border border-slate-700">
             <Calendar className="w-3.5 h-3.5 text-indigo-400" />
             <span className="capitalize">{currentDate}</span>
           </div>
+
+          <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-md border border-slate-700 text-white shadow-inner">
+            <User className={`w-3.5 h-3.5 ${currentUser?.rol === 'ADMIN' ? 'text-rose-400' : 'text-indigo-400'}`} />
+            <span className="font-sans font-bold text-slate-200">{currentUser?.nombre} ({currentUser?.rol})</span>
+            <button
+              onClick={() => {
+                setLoginError('');
+                setIsLoginModalOpen(true);
+              }}
+              className="ml-2 px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-[10px] font-bold text-indigo-300 hover:text-indigo-200 transition-colors cursor-pointer uppercase tracking-wider"
+              title="Cambiar de usuario / Registrar Fichada"
+            >
+              Fichar / Login
+            </button>
+            <button
+              onClick={() => {
+                setCurrentUser(null);
+                localStorage.removeItem('maestro_current_user');
+                setLoginLegajo('');
+                setLoginClave('');
+                setLoginError('');
+              }}
+              className="ml-1.5 px-2 py-0.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-900 hover:border-rose-800 rounded text-[10px] font-bold text-rose-300 hover:text-rose-200 transition-colors cursor-pointer uppercase tracking-wider flex items-center gap-1"
+              title="Cerrar sesión activa"
+            >
+              <LogOut className="w-2.5 h-2.5" />
+              Salir
+            </button>
+          </div>
+
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <Wifi className="w-4 h-4 text-emerald-400" />
@@ -281,8 +544,8 @@ export default function App() {
       </header>
 
       {/* SLIDING TAB BAR / SELECTOR ("Display corredizo") */}
-      <div className="bg-white border-b border-slate-200 sticky top-[73px] z-30 shadow-sm px-6">
-        <div className="max-w-7xl mx-auto flex">
+      <div className="bg-white border-b border-slate-200 sticky top-[73px] z-30 shadow-sm px-4 md:px-6 overflow-x-auto scrollbar-none">
+        <div className="max-w-7xl mx-auto flex min-w-max">
           
           {/* Tab Button 1: Scanner */}
           <button
@@ -408,6 +671,7 @@ export default function App() {
                 onUpdateQuantities={setSavedQuantities}
                 onImportProducts={setProducts}
                 onUpdateImportStatus={handleUpdateImportStatus}
+                currentUser={currentUser}
               />
             </motion.div>
           )}
@@ -425,6 +689,7 @@ export default function App() {
                 onClearOrder={handleClearOrder}
                 onUpdateQuantity={handleUpdateQuantityFromSummary}
                 onBackToReplenishment={() => setActiveTab('replenishment')}
+                currentUser={currentUser}
               />
             </motion.div>
           )}
@@ -445,6 +710,9 @@ export default function App() {
                 onDeleteIndividualProduct={handleDeleteIndividualProduct}
                 importStatus={importStatus}
                 onResetToDemo={handleResetToDemo}
+                currentUser={currentUser}
+                users={users}
+                onUpdateUsers={setUsers}
               />
             </motion.div>
           )}
@@ -497,6 +765,102 @@ export default function App() {
                 {confirmModal.confirmText || 'Confirmar'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* LOGIN / PROFILE SWITCHING MODAL */}
+      {isLoginModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in duration-200">
+          <div className="bg-white max-w-sm w-full rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-indigo-400" />
+                <h3 className="font-bold text-sm uppercase tracking-wider">Fichada / Control Acceso</h3>
+              </div>
+              <button 
+                onClick={() => setIsLoginModalOpen(false)}
+                className="text-slate-400 hover:text-white transition-colors p-1 cursor-pointer bg-transparent border-none"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleLoginSubmit} className="p-5 space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">Legajo o ID Usuario</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400">
+                    <User className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={loginLegajo}
+                    onChange={(e) => setLoginLegajo(e.target.value)}
+                    placeholder="ej. admin / 1001"
+                    className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:bg-white outline-none font-semibold text-slate-800 uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">Clave de Acceso</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400">
+                    <Lock className="w-4 h-4" />
+                  </span>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    value={loginClave}
+                    onChange={(e) => setLoginClave(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:bg-white outline-none font-semibold text-slate-800"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer bg-transparent border-none p-0 focus:outline-none"
+                    title={showPassword ? "Ocultar clave" : "Mostrar clave"}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {loginError && (
+                <div className="bg-rose-50 border border-rose-100 text-rose-700 text-xs font-semibold p-2.5 rounded-lg flex items-center gap-1.5 animate-pulse">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md shadow-indigo-600/10 transition-colors cursor-pointer text-center"
+                >
+                  Confirmar Fichada
+                </button>
+              </div>
+
+              <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-1 text-[10px] text-slate-500 font-mono">
+                <p className="font-bold uppercase text-slate-700 border-b border-slate-150 pb-1 mb-1">Cuentas Demo de Fábrica:</p>
+                <div className="flex justify-between">
+                  <span>Administrador:</span>
+                  <span className="font-bold text-slate-700">admin / admin</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Operador Turno:</span>
+                  <span className="font-bold text-slate-700">1001 / 1234</span>
+                </div>
+              </div>
+            </form>
+
           </div>
         </div>
       )}

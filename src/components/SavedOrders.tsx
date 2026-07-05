@@ -1,5 +1,5 @@
 import React from 'react';
-import { OrderItem } from '../types';
+import { OrderItem, AppUser } from '../types';
 import { formatPrice } from '../utils';
 import { ShoppingCart, Trash2, Printer, ArrowLeft, Download, FileText } from 'lucide-react';
 
@@ -8,13 +8,15 @@ interface SavedOrdersProps {
   onClearOrder: () => void;
   onUpdateQuantity: (code: string, qty: number) => void;
   onBackToReplenishment: () => void;
+  currentUser?: AppUser | null;
 }
 
 export default function SavedOrders({
   orderItems,
   onClearOrder,
   onUpdateQuantity,
-  onBackToReplenishment
+  onBackToReplenishment,
+  currentUser
 }: SavedOrdersProps) {
   
   const totalAmount = orderItems.reduce((sum, item) => sum + (item.precioLista * item.cantidadPedir), 0);

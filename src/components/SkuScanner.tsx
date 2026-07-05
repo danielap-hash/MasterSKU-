@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Product } from '../types';
-import { formatPrice } from '../utils';
-import { Search, Scan, ArrowRight, AlertTriangle, CheckCircle, HelpCircle, Volume2 } from 'lucide-react';
+import { formatPrice, formatLocalDate } from '../utils';
+import { Search, Scan, ArrowRight, AlertTriangle, CheckCircle, HelpCircle, Volume2, Filter } from 'lucide-react';
 
 interface SkuScannerProps {
   products: Product[];
@@ -15,6 +15,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
   const [isScannerActive, setIsScannerActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [selectedSupplier, setSelectedSupplier] = useState<string>(() => localStorage.getItem('maestro_quick_supplier') || 'ALL');
   
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -24,6 +25,14 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
       setSelectedProduct(products[0]);
     }
   }, [products]);
+
+  // Sync selectedSupplier to localStorage
+  useEffect(() => {
+    localStorage.setItem('maestro_quick_supplier', selectedSupplier);
+  }, [selectedSupplier]);
+
+  // Unique suppliers list derived dynamically from products state
+  const uniqueSuppliers = Array.from(new Set(products.map(p => p.proveedor))).sort();
 
   // Play a scanner beep sound using Web Audio API (no external asset needed)
   const playBeep = (type: 'success' | 'error') => {
@@ -63,13 +72,23 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
 
   // Live search as the user types (by Code, Supplier Code, EAN or Description contains)
   useEffect(() => {
+    let filtered = products;
+
+    if (selectedSupplier !== 'ALL') {
+      filtered = filtered.filter(p => p.proveedor === selectedSupplier);
+    }
+
     if (searchQuery.trim() === '') {
-      setSearchResults([]);
+      if (selectedSupplier !== 'ALL') {
+        setSearchResults(filtered); // Show all products of selected supplier if filtered
+      } else {
+        setSearchResults([]);
+      }
       return;
     }
 
     const query = searchQuery.trim().toLowerCase();
-    const filtered = products.filter(p => {
+    const searched = filtered.filter(p => {
       const prodCode = (p.codigoProducto || '').toLowerCase();
       const provCode = (p.codProveedor || '').toLowerCase();
       const eanCode = (p.codigoEan || '').toLowerCase();
@@ -87,8 +106,8 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
       );
     });
 
-    setSearchResults(filtered);
-  }, [searchQuery, products]);
+    setSearchResults(searched);
+  }, [searchQuery, selectedSupplier, products]);
 
   // Capture physical keyboard scanner input (EAN codes are entered fast and terminated with 'Enter')
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -196,19 +215,45 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
             </button>
           </div>
 
-          <div className="relative">
-            <input
-              ref={inputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Escanee EAN o digite código/proveedor..."
-              className="w-full pl-11 pr-4 py-3.5 bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-900 border border-slate-300 rounded-lg text-lg font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all placeholder:text-slate-400 placeholder:font-sans"
-              id="sku-search-input"
-            />
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 h-5 text-slate-400" />
+          {/* Supplier dropdown filter */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Filtro por Proveedor</label>
+            <div className="relative">
+              <select
+                value={selectedSupplier}
+                onChange={(e) => {
+                  setSelectedSupplier(e.target.value);
+                  const supplierProds = products.filter(p => p.proveedor === e.target.value);
+                  if (e.target.value !== 'ALL' && supplierProds.length > 0) {
+                    setSelectedProduct(supplierProds[0]);
+                  }
+                }}
+                className="w-full p-2.5 bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer"
+              >
+                <option value="ALL">Todos los Proveedores</option>
+                {uniqueSuppliers.map(sup => (
+                  <option key={sup} value={sup}>{sup}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">EAN o Cód. Interno</label>
+            <div className="relative">
+              <input
+                ref={inputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Escanee EAN o digite código..."
+                className="w-full pl-11 pr-4 py-3.5 bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-900 border border-slate-300 rounded-lg text-lg font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all placeholder:text-slate-400 placeholder:font-sans"
+                id="sku-search-input"
+              />
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-5 w-5 text-slate-400" />
+              </div>
             </div>
           </div>
 
@@ -218,10 +263,10 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
         </div>
 
         {/* Live Search Results */}
-        {searchQuery && (
+        {(searchQuery || selectedSupplier !== 'ALL') && (
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm max-h-[350px] overflow-y-auto space-y-2">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-              Resultados de búsqueda ({searchResults.length})
+              Resultados ({searchResults.length}) {selectedSupplier !== 'ALL' && ` - ${selectedSupplier}`}
             </h3>
             {searchResults.length === 0 ? (
               <div className="text-center py-6 text-slate-400">
@@ -229,7 +274,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
                 <p className="text-sm">No se encontraron productos coincidentes</p>
               </div>
             ) : (
-              searchResults.map((product) => (
+              searchResults.slice(0, 30).map((product) => (
                 <button
                   key={product.codigoProducto}
                   onClick={() => {
@@ -256,6 +301,11 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
                   <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors ml-2 flex-shrink-0" />
                 </button>
               ))
+            )}
+            {searchResults.length > 30 && (
+              <p className="text-[10px] text-slate-400 font-mono text-center pt-2 border-t border-slate-100 italic">
+                * Mostrando los primeros 30 resultados de {searchResults.length}. Refine el código o descripción para ver más.
+              </p>
             )}
           </div>
         )}
@@ -412,11 +462,11 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-slate-700">
                   <div>
                     <span className="text-xs text-slate-500 block">Primera Venta</span>
-                    <strong className="font-mono text-sm">{selectedProduct.fechaPrimeraVenta ? new Date(selectedProduct.fechaPrimeraVenta).toLocaleDateString('es-AR') : 'Sin registros'}</strong>
+                    <strong className="font-mono text-sm">{selectedProduct.fechaPrimeraVenta ? formatLocalDate(selectedProduct.fechaPrimeraVenta) : 'Sin registros'}</strong>
                   </div>
                   <div>
                     <span className="text-xs text-slate-500 block">Última Venta</span>
-                    <strong className="font-mono text-sm">{selectedProduct.fechaUltimaVenta ? new Date(selectedProduct.fechaUltimaVenta).toLocaleDateString('es-AR') : 'Sin registros'}</strong>
+                    <strong className="font-mono text-sm">{selectedProduct.fechaUltimaVenta ? formatLocalDate(selectedProduct.fechaUltimaVenta) : 'Sin registros'}</strong>
                   </div>
                   <div>
                     <span className="text-xs text-slate-500 block">Días Transcurridos (Vida Útil)</span>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Product, OrderItem, SaleRecord } from '../types';
+import { Product, OrderItem, SaleRecord, AppUser } from '../types';
 import { enrichProduct } from '../data/mockProducts';
-import { formatPrice } from '../utils';
+import { formatPrice, formatLocalDate } from '../utils';
 import { 
   Search, 
   Filter, 
@@ -27,6 +27,7 @@ interface ReplenishmentListProps {
   onUpdateQuantities: (quantities: Record<string, number>) => void;
   onImportProducts: (imported: Product[]) => void;
   onUpdateImportStatus?: (type: 'GENERAL' | 'COMPRA' | 'VENTA', fileName: string, count: number) => void;
+  currentUser: AppUser | null;
 }
 
 type LifespanFilter = 'ALL' | '15_DAYS' | '30_DAYS' | '45_DAYS' | '50_DAYS' | 'MORE_50_DAYS';
@@ -41,7 +42,8 @@ export default function ReplenishmentList({
   savedQuantities,
   onUpdateQuantities,
   onImportProducts,
-  onUpdateImportStatus
+  onUpdateImportStatus,
+  currentUser
 }: ReplenishmentListProps) {
   // Filters
   const [selectedSupplier, setSelectedSupplier] = useState<string>('ALL');
@@ -191,8 +193,10 @@ export default function ReplenishmentList({
         p.ultimoEan.toLowerCase().includes(q) ||
         p.descripcion.toLowerCase().includes(q);
 
-      // Supplier filter
-      const matchesSupplier = selectedSupplier === 'ALL' || p.proveedor === selectedSupplier;
+      // Supplier filter: If a specific supplier is selected, only show active products (both compraTotal > 0 and ventaTotal > 0)
+      const matchesSupplier = selectedSupplier === 'ALL' 
+        ? true 
+        : (p.proveedor === selectedSupplier && p.compraTotal > 0 && p.ventaTotal > 0);
 
       // Lifespan filter
       let matchesLifespan = true;
@@ -693,13 +697,15 @@ export default function ReplenishmentList({
           </h2>
           
           {/* IMPORT EXCEL / CSV BUTTON */}
-          <button
-            onClick={() => setIsImportOpen(true)}
-            className="px-4 py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-bold text-xs rounded-lg flex items-center gap-2 transition-colors focus:outline-none shadow-sm"
-          >
-            <Upload className="w-4 h-4" />
-            Importar Excel / CSV
-          </button>
+          {currentUser?.rol === 'ADMIN' && (
+            <button
+              onClick={() => setIsImportOpen(true)}
+              className="px-4 py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-bold text-xs rounded-lg flex items-center gap-2 transition-colors focus:outline-none shadow-sm"
+            >
+              <Upload className="w-4 h-4" />
+              Importar Excel / CSV
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -987,11 +993,11 @@ export default function ReplenishmentList({
                         <div className="text-[10px] text-slate-500 space-y-0.5 font-mono">
                           <div className="flex items-center gap-1">
                             <span className="text-slate-400">1ra Venta:</span> 
-                            <span className="font-semibold text-slate-700">{p.fechaPrimeraVenta ? new Date(p.fechaPrimeraVenta).toLocaleDateString('es-AR') : 'S/D'}</span>
+                            <span className="font-semibold text-slate-700">{p.fechaPrimeraVenta ? formatLocalDate(p.fechaPrimeraVenta) : 'S/D'}</span>
                           </div>
                           <div className="flex items-center gap-1">
                             <span className="text-slate-400">Últ Venta:</span> 
-                            <span className="font-semibold text-slate-700">{p.fechaUltimaVenta ? new Date(p.fechaUltimaVenta).toLocaleDateString('es-AR') : 'S/D'}</span>
+                            <span className="font-semibold text-slate-700">{p.fechaUltimaVenta ? formatLocalDate(p.fechaUltimaVenta) : 'S/D'}</span>
                           </div>
                         </div>
                       </td>

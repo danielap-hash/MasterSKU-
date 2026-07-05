@@ -52,6 +52,14 @@ export interface Product {
   vidaUtilDias: number;
   estadoQuiebre: 'ANTES_NOVIEMBRE' | 'PRIMERA_QUINCENA_NOVIEMBRE' | 'SEGUNDA_QUINCENA_NOVIEMBRE' | 'DICIEMBRE_1_A_4' | 'OTRO_SIN_QUIEBRE';
   fotoBase64?: string;
+  comentarioCorto?: string;
+}
+
+export interface AppUser {
+  nombre: string;
+  legajo: string;
+  clave: string;
+  rol: 'ADMIN' | 'USUARIO';
 }
 
 export interface OrderItem {

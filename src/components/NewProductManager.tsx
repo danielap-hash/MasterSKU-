@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Product, SaleRecord } from '../types';
+import { Product, SaleRecord, AppUser } from '../types';
 import { enrichProduct } from '../data/mockProducts';
 import { formatPrice } from '../utils';
 import { 
@@ -17,7 +17,12 @@ import {
   FileCode,
   Package,
   Calendar,
-  Sparkles
+  Sparkles,
+  Users,
+  ShieldAlert,
+  UserPlus,
+  Lock,
+  UserCheck
 } from 'lucide-react';
 
 export interface ImportFileInfo {
@@ -41,6 +46,9 @@ interface NewProductManagerProps {
   onDeleteIndividualProduct: (codigoProducto: string) => void;
   importStatus: ImportStatus;
   onResetToDemo: () => void;
+  currentUser: AppUser | null;
+  users: AppUser[];
+  onUpdateUsers: (users: AppUser[]) => void;
 }
 
 export default function NewProductManager({
@@ -50,10 +58,58 @@ export default function NewProductManager({
   onClearNewManualProducts,
   onDeleteIndividualProduct,
   importStatus,
-  onResetToDemo
+  onResetToDemo,
+  currentUser,
+  users = [],
+  onUpdateUsers
 }: NewProductManagerProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // User management states
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserLegajo, setNewUserLegajo] = useState('');
+  const [newUserClave, setNewUserClave] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'USUARIO' | 'ADMIN'>('USUARIO');
+
+  const handleCreateUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserName.trim() || !newUserLegajo.trim() || !newUserClave.trim()) {
+      showToast("Todos los campos del usuario son obligatorios", "error");
+      return;
+    }
+    // Check if user already exists
+    if (users.some(u => u.legajo === newUserLegajo.trim())) {
+      showToast(`El legajo "${newUserLegajo}" ya pertenece a un usuario registrado`, "error");
+      return;
+    }
+    const newUser: AppUser = {
+      nombre: newUserName.trim(),
+      legajo: newUserLegajo.trim(),
+      clave: newUserClave.trim(),
+      rol: newUserRole
+    };
+    onUpdateUsers([...users, newUser]);
+    setNewUserName('');
+    setNewUserLegajo('');
+    setNewUserClave('');
+    setNewUserRole('USUARIO');
+    showToast(`Usuario "${newUser.nombre}" creado exitosamente`, "success");
+  };
+
+  const handleDeleteUser = (legajo: string) => {
+    if (legajo === currentUser?.legajo) {
+      showToast("No puede eliminar el usuario con el que tiene sesión activa", "error");
+      return;
+    }
+    if (legajo === 'admin') {
+      showToast("El usuario administrador por defecto no puede ser eliminado", "error");
+      return;
+    }
+    const filtered = users.filter(u => u.legajo !== legajo);
+    onUpdateUsers(filtered);
+    showToast("Usuario eliminado correctamente", "success");
+  };
 
   const exportManualProductsToCSV = () => {
     if (newManualProducts.length === 0) {
@@ -64,7 +120,8 @@ export default function NewProductManager({
     const headers = [
       "Proveedor",
       "Codigo Proveedor",
-      "SKU / Codigo Interno",
+      "Codigo Interno (Auto)",
+      "Comentario Corto",
       "Descripcion",
       "Codigo Barras EAN",
       "Precio Lista",
@@ -75,6 +132,7 @@ export default function NewProductManager({
       `"${p.proveedor.replace(/"/g, '""')}"`,
       `"${p.codProveedor.replace(/"/g, '""')}"`,
       `"${p.codigoProducto.replace(/"/g, '""')}"`,
+      `"${(p.comentarioCorto || '').replace(/"/g, '""')}"`,
       `"${p.descripcion.replace(/"/g, '""')}"`,
       `"${p.ultimoEan.replace(/"/g, '""')}"`,
       p.precioLista.toString().replace('.', ','),
@@ -95,7 +153,7 @@ export default function NewProductManager({
     link.click();
     document.body.removeChild(link);
     
-    showToast(`Se exportó la lista con ${newManualProducts.length} productos nuevos.`, "success");
+    showToast(`Se exportó la lista con ${newManualProducts.length} productos nuevos con sus comentarios.`, "success");
   };
 
   // Form states
@@ -103,6 +161,7 @@ export default function NewProductManager({
   const [proveedorCustom, setProveedorCustom] = useState('');
   const [codProveedor, setCodProveedor] = useState('');
   const [sku, setSku] = useState('');
+  const [comentarioCorto, setComentarioCorto] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [ean, setEan] = useState('');
   const [precioLista, setPrecioLista] = useState('');
@@ -114,6 +173,9 @@ export default function NewProductManager({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // Derive unique suppliers dynamically
+  const uniqueSuppliers = Array.from(new Set(products.map(p => p.proveedor))).filter(Boolean).sort();
+
   // Auto-generate unique SKU when opening the modal
   const openModal = () => {
     // Generate Sku: find max number-like SKU and add 1
@@ -124,7 +186,15 @@ export default function NewProductManager({
     
     setSku(nextSkuNum.toString());
     setEan(nextSkuNum.toString()); // EAN equals SKU by default
-    setProveedorSelect('VESTA IMPORT S.A.');
+    setComentarioCorto(''); // Short comment
+    
+    // Choose first dynamic supplier or default if empty
+    if (uniqueSuppliers.length > 0) {
+      setProveedorSelect(uniqueSuppliers[0]);
+    } else {
+      setProveedorSelect('VESTA IMPORT S.A.');
+    }
+    
     setProveedorCustom('');
     setCodProveedor('');
     setDescripcion('');
@@ -232,6 +302,10 @@ export default function NewProductManager({
       showToast("El SKU es obligatorio", "error");
       return;
     }
+    if (!comentarioCorto.trim()) {
+      showToast("El Comentario Corto es obligatorio", "error");
+      return;
+    }
     if (!descripcion.trim()) {
       showToast("La Descripción es obligatoria", "error");
       return;
@@ -266,6 +340,7 @@ export default function NewProductManager({
     const newRawItem = {
       proveedor: finalProveedor,
       codigoProducto: sku.trim(),
+      comentarioCorto: comentarioCorto.trim().toUpperCase(),
       descripcion: descripcion.trim().toUpperCase(),
       descCorta: descripcion.substring(0, 15).trim().toUpperCase(),
       unidadesPorBulto: 1,
@@ -330,163 +405,318 @@ export default function NewProductManager({
         </div>
       )}
 
-      {/* DASHBOARD CARD: DATA INTEGRITY & SYNCHRONIZATION STATUS */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="bg-slate-900 px-6 py-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5 text-white">
-            <Database className="w-5 h-5 text-indigo-400" />
+      {/* DASHBOARD CARD: DATA INTEGRITY & SYNCHRONIZATION STATUS (ROLE BASED) */}
+      {currentUser?.rol === 'ADMIN' ? (
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+          
+          {/* Left: Server status and CSV indicators */}
+          <div className="xl:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between">
             <div>
-              <h2 className="text-lg font-bold uppercase tracking-tight">Estado del Servidor de Datos</h2>
-              <p className="text-xs text-slate-400 font-mono">Sincronización de Base de Datos Local</p>
+              <div className="bg-slate-900 px-6 py-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-2.5 text-white">
+                  <Database className="w-5 h-5 text-indigo-400" />
+                  <div>
+                    <h2 className="text-lg font-bold uppercase tracking-tight">Servidor de Datos Maestros</h2>
+                    <p className="text-xs text-slate-400 font-mono">Sincronización de Base de Datos Local</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 ${
+                    isFullyLoaded 
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' 
+                      : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${isFullyLoaded ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
+                    {isFullyLoaded ? 'COMPLETA (3/3)' : `INCOMPLETA (${loadedCount}/3)`}
+                  </span>
+                  <button
+                    onClick={onResetToDemo}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10px] rounded font-bold uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer"
+                    title="Restablecer base de datos a los valores demo de fábrica"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Reset Demo
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Status Message */}
+                {isFullyLoaded ? (
+                  <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl p-3.5 flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-bold text-xs">✓ Base de Datos Activa</p>
+                      <p className="text-[11px] text-emerald-700 mt-0.5">
+                        Los tres archivos maestros indispensables han sido cargados. La lógica de cálculo de quiebres de stock está operando con datos actualizados en tiempo real.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-amber-50 border border-amber-100 text-amber-800 rounded-xl p-3.5 flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-bold text-xs">⚠ Sincronización Incompleta</p>
+                      <p className="text-[11px] text-amber-700 mt-0.5">
+                        Falta cargar alguno de los 3 archivos obligatorios (General, Compra o Venta). Se requiere de la totalidad de estas planillas en la pestaña de Abastecimiento para predicciones correctas.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Grid detailing the 3 files */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  
+                  {/* File 1: General */}
+                  <div className={`rounded-xl border p-4 transition-all space-y-2 bg-white ${
+                    importStatus.general.loaded ? 'border-indigo-100 hover:border-indigo-200 shadow-sm' : 'border-slate-100'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <FileSpreadsheet className={`w-4 h-4 ${importStatus.general.loaded ? 'text-indigo-600' : 'text-slate-400'}`} />
+                        <span className="font-bold text-slate-800 text-xs">1. Catálogo Gral</span>
+                      </div>
+                      {importStatus.general.loaded ? (
+                        <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">OK</span>
+                      ) : (
+                        <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">FALTA</span>
+                      )}
+                    </div>
+                    <div className="space-y-1 text-[10px] text-slate-600 font-mono">
+                      <div className="flex justify-between border-b border-slate-50 pb-1">
+                        <span className="text-slate-400">Archivo:</span>
+                        <span className="font-bold text-slate-800 truncate max-w-[90px]" title={importStatus.general.fileName}>{importStatus.general.fileName}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-50 pb-1">
+                        <span className="text-slate-400">Reg:</span>
+                        <span className="font-bold text-slate-800">{importStatus.general.count} p.</span>
+                      </div>
+                      <div className="flex justify-between pb-0.5">
+                        <span className="text-slate-400">Fecha:</span>
+                        <span className="font-bold text-slate-800">{importStatus.general.date}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* File 2: Compra */}
+                  <div className={`rounded-xl border p-4 transition-all space-y-2 bg-white ${
+                    importStatus.compra.loaded ? 'border-indigo-100 hover:border-indigo-200 shadow-sm' : 'border-slate-100'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <FileCheck className={`w-4 h-4 ${importStatus.compra.loaded ? 'text-indigo-600' : 'text-slate-400'}`} />
+                        <span className="font-bold text-slate-800 text-xs">2. Reg. Compras</span>
+                      </div>
+                      {importStatus.compra.loaded ? (
+                        <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">OK</span>
+                      ) : (
+                        <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">FALTA</span>
+                      )}
+                    </div>
+                    <div className="space-y-1 text-[10px] text-slate-600 font-mono">
+                      <div className="flex justify-between border-b border-slate-50 pb-1">
+                        <span className="text-slate-400">Archivo:</span>
+                        <span className="font-bold text-slate-800 truncate max-w-[90px]" title={importStatus.compra.fileName}>{importStatus.compra.fileName}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-50 pb-1">
+                        <span className="text-slate-400">Reg:</span>
+                        <span className="font-bold text-slate-800">{importStatus.compra.count} p.</span>
+                      </div>
+                      <div className="flex justify-between pb-0.5">
+                        <span className="text-slate-400">Fecha:</span>
+                        <span className="font-bold text-slate-800">{importStatus.compra.date}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* File 3: Venta */}
+                  <div className={`rounded-xl border p-4 transition-all space-y-2 bg-white ${
+                    importStatus.venta.loaded ? 'border-indigo-100 hover:border-indigo-200 shadow-sm' : 'border-slate-100'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <FileCode className={`w-4 h-4 ${importStatus.venta.loaded ? 'text-indigo-600' : 'text-slate-400'}`} />
+                        <span className="font-bold text-slate-800 text-xs">3. Hist. Ventas</span>
+                      </div>
+                      {importStatus.venta.loaded ? (
+                        <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">OK</span>
+                      ) : (
+                        <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">FALTA</span>
+                      )}
+                    </div>
+                    <div className="space-y-1 text-[10px] text-slate-600 font-mono">
+                      <div className="flex justify-between border-b border-slate-50 pb-1">
+                        <span className="text-slate-400">Archivo:</span>
+                        <span className="font-bold text-slate-800 truncate max-w-[90px]" title={importStatus.venta.fileName}>{importStatus.venta.fileName}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-50 pb-1">
+                        <span className="text-slate-400">Reg:</span>
+                        <span className="font-bold text-slate-800">{importStatus.venta.count} v.</span>
+                      </div>
+                      <div className="flex justify-between pb-0.5">
+                        <span className="text-slate-400">Fecha:</span>
+                        <span className="font-bold text-slate-800">{importStatus.venta.date}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-150 text-[10px] text-slate-400 font-mono italic text-center">
+              * Nota: Una vez cargados los datos, no se borrarán de la tableta hasta que cargue una nueva actualización de archivos CSV.
             </div>
           </div>
+
+          {/* Right: User Management (5 cols) */}
+          <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between">
+            <div className="bg-slate-900 px-6 py-5 border-b border-slate-800 flex items-center gap-2.5 text-white">
+              <Users className="w-5 h-5 text-indigo-400" />
+              <div>
+                <h2 className="text-lg font-bold uppercase tracking-tight">Gestión de Usuarios</h2>
+                <p className="text-xs text-slate-400 font-mono">Control de Acceso con Clave</p>
+              </div>
+            </div>
+
+            <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+              {/* Form to create user */}
+              <form onSubmit={handleCreateUser} className="space-y-3 bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+                <h3 className="text-xs font-black uppercase text-slate-700 flex items-center gap-1.5 border-b border-slate-200 pb-1.5">
+                  <UserPlus className="w-4 h-4 text-indigo-600" />
+                  Agregar Nuevo Usuario
+                </h3>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Nombre Completo</label>
+                    <input
+                      type="text"
+                      required
+                      value={newUserName}
+                      onChange={(e) => setNewUserName(e.target.value)}
+                      placeholder="ej. Juan Pérez"
+                      className="w-full p-2 bg-white border border-slate-200 rounded text-xs focus:border-indigo-500 outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Legajo / Usuario</label>
+                    <input
+                      type="text"
+                      required
+                      value={newUserLegajo}
+                      onChange={(e) => setNewUserLegajo(e.target.value)}
+                      placeholder="ej. 1002"
+                      className="w-full p-2 bg-white border border-slate-200 rounded text-xs focus:border-indigo-500 outline-none font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Contraseña / Clave</label>
+                    <input
+                      type="password"
+                      required
+                      value={newUserClave}
+                      onChange={(e) => setNewUserClave(e.target.value)}
+                      placeholder="••••"
+                      className="w-full p-2 bg-white border border-slate-200 rounded text-xs focus:border-indigo-500 outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Perfil / Rol</label>
+                    <select
+                      value={newUserRole}
+                      onChange={(e) => setNewUserRole(e.target.value as any)}
+                      className="w-full p-2 bg-white border border-slate-200 rounded text-xs focus:border-indigo-500 outline-none cursor-pointer font-semibold text-slate-700"
+                    >
+                      <option value="USUARIO">Operador (Usuario)</option>
+                      <option value="ADMIN">Administrador (Admin)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase tracking-wider rounded transition-all cursor-pointer shadow-sm shadow-indigo-600/10"
+                >
+                  Registrar Usuario
+                </button>
+              </form>
+
+              {/* Users list table */}
+              <div className="space-y-2">
+                <h3 className="text-xs font-black uppercase text-slate-700 flex items-center gap-1.5 border-b border-slate-200 pb-1">
+                  <UserCheck className="w-4 h-4 text-emerald-600" />
+                  Usuarios Registrados ({users.length})
+                </h3>
+                <div className="max-h-[120px] overflow-y-auto border border-slate-200 rounded-lg bg-white">
+                  <table className="w-full text-left text-[11px] border-collapse font-mono">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                        <th className="py-1 px-2.5">Nombre</th>
+                        <th className="py-1 px-2.5 text-center">Legajo</th>
+                        <th className="py-1 px-2.5 text-center">Clave</th>
+                        <th className="py-1 px-2.5 text-center">Rol</th>
+                        <th className="py-1 px-2.5 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50 text-slate-700">
+                      {users.map((u) => (
+                        <tr key={u.legajo} className="hover:bg-slate-50/50">
+                          <td className="py-1 px-2.5 font-sans font-semibold text-slate-900 truncate max-w-[80px]" title={u.nombre}>{u.nombre}</td>
+                          <td className="py-1 px-2.5 text-center font-bold text-slate-600">{u.legajo}</td>
+                          <td className="py-1 px-2.5 text-center text-slate-400">••••</td>
+                          <td className="py-1 px-2.5 text-center">
+                            <span className={`px-1 py-0.5 rounded text-[7px] font-black tracking-wide ${
+                              u.rol === 'ADMIN' ? 'bg-rose-100 text-rose-700 border border-rose-200' : 'bg-slate-100 text-slate-600 border border-slate-200'
+                            }`}>
+                              {u.rol}
+                            </span>
+                          </td>
+                          <td className="py-1 px-2.5 text-center">
+                            <button
+                              onClick={() => handleDeleteUser(u.legajo)}
+                              disabled={u.legajo === currentUser?.legajo || u.legajo === 'admin'}
+                              type="button"
+                              className={`p-1 rounded transition-colors ${
+                                u.legajo === currentUser?.legajo || u.legajo === 'admin'
+                                  ? 'text-slate-200 cursor-not-allowed'
+                                  : 'text-rose-600 hover:bg-rose-50 cursor-pointer'
+                              }`}
+                              title="Eliminar usuario"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      ) : (
+        /* Operator Panel / Simple banner */
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <span className={`px-3 py-1 rounded-full text-xs font-black flex items-center gap-1.5 ${
-              isFullyLoaded 
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' 
-                : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${isFullyLoaded ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
-              {isFullyLoaded ? 'BASE COMPLETA (3/3)' : `BASE INCOMPLETA (${loadedCount}/3)`}
-            </span>
-            <button
-              onClick={onResetToDemo}
-              className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs rounded-lg font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors"
-              title="Restablecer base de datos a los valores demo de fábrica"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Reset Demo
-            </button>
+            <div className="w-12 h-12 rounded-xl bg-indigo-550 bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold text-lg border border-indigo-200 shadow-sm uppercase">
+              {currentUser?.nombre.substring(0,2)}
+            </div>
+            <div>
+              <h4 className="text-base font-bold text-slate-800">Sesión Iniciada: {currentUser?.nombre}</h4>
+              <p className="text-xs text-slate-500 font-mono">Rol: {currentUser?.rol} (Operador) | Legajo / Fichada: {currentUser?.legajo}</p>
+            </div>
+          </div>
+          <div className="text-xs font-semibold text-slate-500 bg-white border border-slate-200 px-4 py-3 rounded-xl max-w-md text-slate-600 leading-relaxed">
+            🔑 <strong>Perfil Usuario Operador:</strong> Las funciones administrativas como cargar planillas maestros de CSV generales, restablecer base de datos o administrar usuarios están deshabilitadas para el personal de depósito. Puede registrar productos nuevos y gestionar órdenes.
           </div>
         </div>
-
-        <div className="p-6 space-y-6">
-          {/* Status Message */}
-          {isFullyLoaded ? (
-            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 flex items-start gap-3">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-bold text-sm">✓ Sincronización Completa</p>
-                <p className="text-xs text-emerald-700 mt-0.5">
-                  Los tres archivos maestros indispensables han sido cargados. El maestro de SKU y la lógica de cálculo de quiebres de stock están operando con precisión de depósito en base a datos reales actualizados.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-bold text-sm">⚠ Sincronización Incompleta</p>
-                <p className="text-xs text-amber-700 mt-0.5">
-                  Falta cargar alguno de los 3 archivos obligatorios (General, Compra o Venta). La coctelera de cálculo de reposiciones y quiebre de stock requiere de la totalidad de estas planillas para arrojar predicciones correctas.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Grid detailing the 3 files */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            
-            {/* File 1: General */}
-            <div className={`rounded-xl border p-5 transition-all space-y-4 shadow-sm bg-white ${
-              importStatus.general.loaded ? 'border-indigo-100 hover:border-indigo-200' : 'border-slate-100'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <FileSpreadsheet className={`w-5 h-5 ${importStatus.general.loaded ? 'text-indigo-600' : 'text-slate-400'}`} />
-                  <span className="font-bold text-slate-800 text-sm">1. Catálogo General</span>
-                </div>
-                {importStatus.general.loaded ? (
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">CARGADO</span>
-                ) : (
-                  <span className="bg-slate-100 text-slate-500 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">PENDIENTE</span>
-                )}
-              </div>
-              <div className="space-y-1.5 text-xs text-slate-600 font-mono">
-                <div className="flex justify-between border-b border-slate-50 pb-1.5">
-                  <span className="text-slate-400">Archivo:</span>
-                  <span className="font-bold text-slate-800 truncate max-w-[150px]" title={importStatus.general.fileName}>{importStatus.general.fileName}</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-50 pb-1.5">
-                  <span className="text-slate-400">Registros:</span>
-                  <span className="font-bold text-slate-800">{importStatus.general.count} prod.</span>
-                </div>
-                <div className="flex justify-between pb-1">
-                  <span className="text-slate-400">Actualización:</span>
-                  <span className="font-bold text-slate-800">{importStatus.general.date}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* File 2: Compra */}
-            <div className={`rounded-xl border p-5 transition-all space-y-4 shadow-sm bg-white ${
-              importStatus.compra.loaded ? 'border-indigo-100 hover:border-indigo-200' : 'border-slate-100'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <FileCheck className={`w-5 h-5 ${importStatus.compra.loaded ? 'text-indigo-600' : 'text-slate-400'}`} />
-                  <span className="font-bold text-slate-800 text-sm">2. Registro Compras</span>
-                </div>
-                {importStatus.compra.loaded ? (
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">CARGADO</span>
-                ) : (
-                  <span className="bg-slate-100 text-slate-500 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">PENDIENTE</span>
-                )}
-              </div>
-              <div className="space-y-1.5 text-xs text-slate-600 font-mono">
-                <div className="flex justify-between border-b border-slate-50 pb-1.5">
-                  <span className="text-slate-400">Archivo:</span>
-                  <span className="font-bold text-slate-800 truncate max-w-[150px]" title={importStatus.compra.fileName}>{importStatus.compra.fileName}</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-50 pb-1.5">
-                  <span className="text-slate-400">Registros:</span>
-                  <span className="font-bold text-slate-800">{importStatus.compra.count} prod.</span>
-                </div>
-                <div className="flex justify-between pb-1">
-                  <span className="text-slate-400">Actualización:</span>
-                  <span className="font-bold text-slate-800">{importStatus.compra.date}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* File 3: Venta */}
-            <div className={`rounded-xl border p-5 transition-all space-y-4 shadow-sm bg-white ${
-              importStatus.venta.loaded ? 'border-indigo-100 hover:border-indigo-200' : 'border-slate-100'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <FileCode className={`w-5 h-5 ${importStatus.venta.loaded ? 'text-indigo-600' : 'text-slate-400'}`} />
-                  <span className="font-bold text-slate-800 text-sm">3. Historial Ventas</span>
-                </div>
-                {importStatus.venta.loaded ? (
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">CARGADO</span>
-                ) : (
-                  <span className="bg-slate-100 text-slate-500 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">PENDIENTE</span>
-                )}
-              </div>
-              <div className="space-y-1.5 text-xs text-slate-600 font-mono">
-                <div className="flex justify-between border-b border-slate-50 pb-1.5">
-                  <span className="text-slate-400">Archivo:</span>
-                  <span className="font-bold text-slate-800 truncate max-w-[150px]" title={importStatus.venta.fileName}>{importStatus.venta.fileName}</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-50 pb-1.5">
-                  <span className="text-slate-400">Registros:</span>
-                  <span className="font-bold text-slate-800">{importStatus.venta.count} ventas</span>
-                </div>
-                <div className="flex justify-between pb-1">
-                  <span className="text-slate-400">Actualización:</span>
-                  <span className="font-bold text-slate-800">{importStatus.venta.date}</span>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          <div className="text-xs text-slate-400 font-mono italic text-center">
-            * Nota: Una vez cargados los datos, no se borrarán en la tableta hasta que cargue una nueva actualización de archivos CSV.
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* QUICK ACTIONS SECTION */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col md:flex-row items-center justify-between gap-4">
@@ -501,7 +731,7 @@ export default function NewProductManager({
         </div>
         <button
           onClick={openModal}
-          className="w-full md:w-auto px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm uppercase tracking-wider rounded-xl shadow-md transition-all hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2"
+          className="w-full md:w-auto px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm uppercase tracking-wider rounded-xl shadow-md transition-all hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 cursor-pointer"
         >
           <PlusCircle className="w-5 h-5" />
           Cargar Nuevo Producto
@@ -666,17 +896,24 @@ export default function NewProductManager({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 
                 {/* 1. Proveedor */}
-                <div className="space-y-1.5 col-span-2">
+                <div className="space-y-1.5 md:col-span-2">
                   <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Proveedor</label>
                   <select
                     value={proveedorSelect}
                     onChange={(e) => setProveedorSelect(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 font-medium focus:border-indigo-500 focus:bg-white outline-none"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 font-medium focus:border-indigo-500 focus:bg-white outline-none cursor-pointer"
                   >
-                    <option value="VESTA IMPORT S.A.">VESTA IMPORT S.A.</option>
-                    <option value="ROCIG S.A.">ROCIG S.A.</option>
-                    <option value="ESTRELLA S.A.">ESTRELLA S.A.</option>
-                    <option value="DISTRIBUIDORA SUR">DISTRIBUIDORA SUR</option>
+                    {uniqueSuppliers.map(sup => (
+                      <option key={sup} value={sup}>{sup}</option>
+                    ))}
+                    {uniqueSuppliers.length === 0 && (
+                      <>
+                        <option value="VESTA IMPORT S.A.">VESTA IMPORT S.A.</option>
+                        <option value="ROCIG S.A.">ROCIG S.A.</option>
+                        <option value="ESTRELLA S.A.">ESTRELLA S.A.</option>
+                        <option value="DISTRIBUIDORA SUR">DISTRIBUIDORA SUR</option>
+                      </>
+                    )}
                     <option value="OTRO">OTRO (Especificar abajo)...</option>
                   </select>
                   
@@ -705,20 +942,22 @@ export default function NewProductManager({
                   />
                 </div>
 
-                {/* 3. Código Interno / SKU */}
+                {/* 3. Comentario Corto (formerly SKU/Codigo Interno) */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">SKU / Cód. Interno</label>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Comentario Corto</label>
                   <input
                     type="text"
-                    value={sku}
-                    onChange={(e) => setSku(e.target.value)}
-                    className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-lg text-sm font-mono font-bold text-indigo-700 outline-none"
+                    value={comentarioCorto}
+                    onChange={(e) => setComentarioCorto(e.target.value)}
+                    placeholder="ej. Muestra proveedor / Sin stock habitual"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:border-indigo-500 focus:bg-white outline-none font-semibold text-slate-800"
                     required
                   />
+                  <span className="text-[10px] text-slate-400 block font-mono">Cód. Interno Autogenerado: <strong>{sku}</strong></span>
                 </div>
 
                 {/* 4. Descripción del Producto */}
-                <div className="space-y-1.5 col-span-2">
+                <div className="space-y-1.5 md:col-span-2">
                   <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Descripción del Producto</label>
                   <input
                     type="text"
@@ -774,7 +1013,7 @@ export default function NewProductManager({
                 </div>
 
                 {/* 8. Foto del Producto (Cargar o Sacar) */}
-                <div className="space-y-2 col-span-2 border-t border-slate-100 pt-3">
+                <div className="space-y-2 md:col-span-2 border-t border-slate-100 pt-3">
                   <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">Foto del Producto (Cámara o Archivo)</label>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
