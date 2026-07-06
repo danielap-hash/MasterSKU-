@@ -112,14 +112,34 @@ export default function App() {
 
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('maestro_products');
+    let loadedProducts: Product[] = [];
     if (saved) {
       try {
-        return JSON.parse(saved);
+        loadedProducts = JSON.parse(saved);
       } catch (e) {
         console.error("Error parsing saved products", e);
+        loadedProducts = [...mockProducts];
+      }
+    } else {
+      loadedProducts = [...mockProducts];
+    }
+
+    // Safety guard: ensure all newManualProducts are always present in products on startup
+    const savedManual = localStorage.getItem('maestro_new_manual_products');
+    if (savedManual) {
+      try {
+        const manualList: Product[] = JSON.parse(savedManual);
+        const existingCodes = new Set(loadedProducts.map(p => p.codigoProducto));
+        const missingManual = manualList.filter(p => !existingCodes.has(p.codigoProducto));
+        if (missingManual.length > 0) {
+          loadedProducts = [...missingManual, ...loadedProducts];
+        }
+      } catch (e) {
+        console.error("Error merging manual products on startup", e);
       }
     }
-    return mockProducts;
+
+    return loadedProducts;
   });
   
   const [importStatus, setImportStatus] = useState<ImportStatus>(() => {
@@ -227,6 +247,142 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('maestro_new_manual_products', JSON.stringify(newManualProducts));
   }, [newManualProducts]);
+
+  // --- AUTOMATIC SERVER-SIDE SYNCHRONIZATION ENGINE ---
+  // Synchronization state
+  const [isSyncInitialized, setIsSyncInitialized] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string>('');
+
+  // 1. Initial Load & Seed Server on Mount
+  useEffect(() => {
+    async function initSync() {
+      try {
+        const response = await fetch('/api/sync');
+        if (response.ok) {
+          const result = await response.json();
+          if (result.hasData) {
+            // Server has data, apply it to the client states
+            const { products: sProds, newManualProducts: sManual, users: sUsers, importStatus: sStatus, carts: sCarts } = result.data;
+            if (sProds && sProds.length > 0) setProducts(sProds);
+            if (sManual) setNewManualProducts(sManual);
+            if (sUsers && sUsers.length > 0) setUsers(sUsers);
+            if (sStatus) setImportStatus(sStatus);
+            
+            const userLegajo = currentUser?.legajo || 'anonymous';
+            if (sCarts && sCarts[userLegajo]) {
+              const userCart = sCarts[userLegajo];
+              if (userCart.savedQuantities) setSavedQuantities(userCart.savedQuantities);
+              if (userCart.savedOrder) setSavedOrder(userCart.savedOrder);
+            }
+            console.log("Synchronized state successfully from server.");
+          } else {
+            // Server has no data (e.g. first deployment), seed server with local storage data
+            const userLegajo = currentUser?.legajo || 'anonymous';
+            const initialPayload = {
+              products,
+              newManualProducts,
+              users,
+              importStatus,
+              carts: {
+                [userLegajo]: { savedQuantities, savedOrder }
+              }
+            };
+            await fetch('/api/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(initialPayload)
+            });
+            console.log("Seeded server with local state.");
+          }
+          setLastSyncedTime(new Date().toLocaleTimeString('es-AR'));
+        }
+      } catch (err) {
+        console.error("Failed to initial sync with server:", err);
+      } finally {
+        setIsSyncInitialized(true);
+      }
+    }
+    initSync();
+  }, [currentUser?.legajo]);
+
+  // 2. Push client updates to server on state change
+  useEffect(() => {
+    if (!isSyncInitialized) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const userLegajo = currentUser?.legajo || 'anonymous';
+        const payload = {
+          products,
+          newManualProducts,
+          users,
+          importStatus,
+          carts: {
+            [userLegajo]: { savedQuantities, savedOrder }
+          }
+        };
+
+        const response = await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          setLastSyncedTime(new Date().toLocaleTimeString('es-AR'));
+        }
+      } catch (err) {
+        console.error("Failed to push sync update to server:", err);
+      }
+    }, 1500); // 1.5 second debounce to prevent spamming and allow typing
+
+    return () => clearTimeout(timer);
+  }, [products, newManualProducts, users, importStatus, savedQuantities, savedOrder, isSyncInitialized, currentUser?.legajo]);
+
+  // 3. Periodic polling in the background for real-time multiplayer/multi-device collaboration
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch('/api/sync');
+        if (response.ok) {
+          const result = await response.json();
+          if (result.hasData) {
+            const { products: sProds, newManualProducts: sManual, users: sUsers, importStatus: sStatus, carts: sCarts } = result.data;
+            
+            // Check changes using deep comparison to keep state stable
+            if (sProds && JSON.stringify(sProds) !== JSON.stringify(products)) {
+              setProducts(sProds);
+            }
+            if (sManual && JSON.stringify(sManual) !== JSON.stringify(newManualProducts)) {
+              setNewManualProducts(sManual);
+            }
+            if (sUsers && JSON.stringify(sUsers) !== JSON.stringify(users)) {
+              setUsers(sUsers);
+            }
+            if (sStatus && JSON.stringify(sStatus) !== JSON.stringify(importStatus)) {
+              setImportStatus(sStatus);
+            }
+            
+            const userLegajo = currentUser?.legajo || 'anonymous';
+            if (sCarts && sCarts[userLegajo]) {
+              const userCart = sCarts[userLegajo];
+              if (userCart.savedQuantities && JSON.stringify(userCart.savedQuantities) !== JSON.stringify(savedQuantities)) {
+                setSavedQuantities(userCart.savedQuantities);
+              }
+              if (userCart.savedOrder && JSON.stringify(userCart.savedOrder) !== JSON.stringify(savedOrder)) {
+                setSavedOrder(userCart.savedOrder);
+              }
+            }
+            setLastSyncedTime(new Date().toLocaleTimeString('es-AR'));
+          }
+        }
+      } catch (err) {
+        console.warn("Background synchronization poll failed:", err);
+      }
+    }, 8000); // Poll every 8 seconds
+
+    return () => clearInterval(interval);
+  }, [products, newManualProducts, users, importStatus, savedQuantities, savedOrder, currentUser?.legajo]);
 
   // Handlers for manual additions and status updates
   const handleAddProduct = (newProduct: Product) => {
@@ -535,6 +691,12 @@ export default function App() {
               <Wifi className="w-4 h-4 text-emerald-400" />
               <span className="text-emerald-400 font-bold">ONLINE</span>
             </div>
+            {lastSyncedTime && (
+              <div className="flex items-center gap-1 border-l border-slate-800 pl-3 text-indigo-400" title={`Última sincronización con servidor de la empresa: ${lastSyncedTime}`}>
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping shrink-0" />
+                <span className="text-[10px] font-bold tracking-wider">NUBE OK</span>
+              </div>
+            )}
             <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
               <Battery className="w-4.5 h-4.5 text-emerald-400" />
               <span>100%</span>
