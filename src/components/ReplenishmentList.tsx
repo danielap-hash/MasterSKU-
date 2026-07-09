@@ -193,10 +193,10 @@ export default function ReplenishmentList({
         p.ultimoEan.toLowerCase().includes(q) ||
         p.descripcion.toLowerCase().includes(q);
 
-      // Supplier filter: If a specific supplier is selected, only show active products (both compraTotal > 0 and ventaTotal > 0)
+      // Supplier filter: If a specific supplier is selected, show all products belonging to that supplier (even if they don't have active transactions yet)
       const matchesSupplier = selectedSupplier === 'ALL' 
         ? true 
-        : (p.proveedor === selectedSupplier && p.compraTotal > 0 && p.ventaTotal > 0);
+        : (p.proveedor === selectedSupplier);
 
       // Lifespan filter
       let matchesLifespan = true;
