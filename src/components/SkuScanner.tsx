@@ -5,12 +5,13 @@ import { Search, Scan, ArrowRight, AlertTriangle, CheckCircle, HelpCircle, Volum
 
 interface SkuScannerProps {
   products: Product[];
+  selectedProduct: Product | null;
   onSelectProduct: (product: Product) => void;
+  onSelectScannedProduct: (product: Product | null) => void;
 }
 
-export default function SkuScanner({ products, onSelectProduct }: SkuScannerProps) {
+export default function SkuScanner({ products, selectedProduct, onSelectProduct, onSelectScannedProduct }: SkuScannerProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [isScannerActive, setIsScannerActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState(false);
@@ -18,13 +19,6 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
   const [selectedSupplier, setSelectedSupplier] = useState<string>(() => localStorage.getItem('maestro_quick_supplier') || 'ALL');
   
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Sync selectedProduct with products list on load/update
-  useEffect(() => {
-    if (products.length > 0 && (!selectedProduct || !products.some(p => p.codigoProducto === selectedProduct.codigoProducto))) {
-      setSelectedProduct(products[0]);
-    }
-  }, [products]);
 
   // Sync selectedSupplier to localStorage
   useEffect(() => {
@@ -116,7 +110,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
       
       if (searchResults.length > 0) {
         // Match found
-        setSelectedProduct(searchResults[0]);
+        onSelectScannedProduct(searchResults[0]);
         playBeep('success');
         setSearchQuery('');
       } else {
@@ -139,7 +133,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
       return prodCode === cleanEan || provCode === cleanEan || eanCode === cleanEan || ultEan === cleanEan || segEan === cleanEan;
     });
     if (found) {
-      setSelectedProduct(found);
+      onSelectScannedProduct(found);
       playBeep('success');
       setSearchQuery('');
     } else {
@@ -225,7 +219,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
                   setSelectedSupplier(e.target.value);
                   const supplierProds = products.filter(p => p.proveedor === e.target.value);
                   if (e.target.value !== 'ALL' && supplierProds.length > 0) {
-                    setSelectedProduct(supplierProds[0]);
+                    onSelectScannedProduct(supplierProds[0]);
                   }
                 }}
                 className="w-full p-2.5 bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer"
@@ -278,7 +272,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
                 <button
                   key={product.codigoProducto}
                   onClick={() => {
-                    setSelectedProduct(product);
+                    onSelectScannedProduct(product);
                     playBeep('success');
                     setSearchQuery('');
                   }}

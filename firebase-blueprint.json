@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A warehouse master SKU item, containing stock, purchase, and sales metadata",
+      "type": "object",
+      "properties": {
+        "proveedor": { "type": "string" },
+        "codigoProducto": { "type": "string" },
+        "descripcion": { "type": "string" },
+        "descCorta": { "type": "string" },
+        "unidadesPorBulto": { "type": "number" },
+        "precioLista": { "type": "number" },
+        "tasaIva": { "type": "number" },
+        "impInterno": { "type": "number" },
+        "vtaWeb": { "type": "string" },
+        "fotos": { "type": "string" },
+        "fraccionVta": { "type": "number" },
+        "cadenaDtos": { "type": "string" },
+        "dtosParticulares: ": { "type": "string" },
+        "codProveedor": { "type": "string" },
+        "bloqCompra": { "type": "string" },
+        "bloqVenta": { "type": "string" },
+        "codigoEan": { "type": "string" },
+        "segundoEan": { "type": "string" },
+        "ultimoEan": { "type": "string" },
+        "gtin14": { "type": "string" },
+        "estadoGral": { "type": "string" },
+        "cjaXPallet": { "type": "number" },
+        "cjasXCam": { "type": "number" },
+        "resultado": { "type": "string" },
+        "compraTotal": { "type": "number" },
+        "ventaTotal": { "type": "number" },
+        "ventas": { "type": "array" },
+        "ventasBreakdown": { "type": "object" },
+        "fechaPrimeraVenta": { "type": "string" },
+        "fechaUltimaVenta": { "type": "string" },
+        "vidaUtilDias": { "type": "number" },
+        "estadoQuiebre": { "type": "string" }
+      },
+      "required": ["codigoProducto", "descripcion"]
+    },
+    "AppUser": {
+      "title": "AppUser",
+      "description": "An operator or administrator authorized to access the system",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "legajo": { "type": "string" },
+        "clave": { "type": "string" },
+        "rol": { "type": "string", "enum": ["ADMIN", "USUARIO"] }
+      },
+      "required": ["nombre", "legajo", "clave", "rol"]
+    },
+    "ImportStatus": {
+      "title": "ImportStatus",
+      "description": "Administrative database metadata showing files, upload dates, and row counts",
+      "type": "object",
+      "properties": {
+        "general": { "type": "object" },
+        "compra": { "type": "object" },
+        "venta": { "type": "object" }
+      },
+      "required": ["general", "compra", "venta"]
+    },
+    "UserCart": {
+      "title": "UserCart",
+      "description": "Active purchase and stock replenishment cart working states synchronized across user sessions and devices",
+      "type": "object",
+      "properties": {
+        "legajo": { "type": "string" },
+        "savedQuantities": { "type": "object" },
+        "savedOrder": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["legajo"]
+    }
+  },
+  "firestore": {
+    "products/{codigoProducto}": {
+      "schema": "Product",
+      "description": "The centralized, master catalog of all available warehouse products"
+    },
+    "new_manual_products/{codigoProducto}": {
+      "schema": "Product",
+      "description": "A centralized register of manually added warehouse products"
+    },
+    "users/{legajo}": {
+      "schema": "AppUser",
+      "description": "Authorized staff credentials containing credentials and authorization roles"
+    },
+    "carts/{legajo}": {
+      "schema": "UserCart",
+      "description": "Active user cart states containing selected quantities and order items synchronized in real-time"
+    },
+    "config/importStatus": {
+      "schema": "ImportStatus",
+      "description": "System-wide upload and import metadata tracked centrally"
+    }
+  }
+}

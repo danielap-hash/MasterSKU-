@@ -1,10 +1,8 @@
 {
-  "name": "Remix: Maestro SKU y Abastecimiento",
+  "name": "Maestro SKU y Abastecimiento",
   "description": "Aplicación optimizada para tabletas industriales y colectores manuales con consultas rápidas por código/EAN, quiebres de stock y pedidos de reposición.",
   "requestFramePermissions": [
     "camera"
   ],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import SkuScanner from './components/SkuScanner';
 import ReplenishmentList from './components/ReplenishmentList';
 import SavedOrders from './components/SavedOrders';
@@ -26,39 +26,41 @@ import {
   EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  initUsersIfNeeded, 
-  subscribeUsers, 
-  saveUserInCloud,
-  initProductsIfNeeded,
-  subscribeProducts,
-  saveProductInCloud,
-  deleteProductFromCloud,
-  overwriteProductsInCloud,
-  subscribeNewManualProducts,
-  saveNewManualProductInCloud,
-  deleteNewManualProductFromCloud,
-  clearAllNewManualProductsFromCloud,
-  initImportStatusIfNeeded,
-  subscribeImportStatus,
-  saveImportStatusInCloud,
-  subscribeSavedOrder,
-  subscribeSavedQuantities,
-  saveUserCartInCloud
-} from './lib/dbService';
+import {
+  seedInitialDataIfEmpty,
+  syncProducts,
+  syncUsers,
+  syncImportStatus,
+  syncNewManualProducts,
+  saveProduct,
+  deleteProduct,
+  bulkSaveProducts,
+  saveUser,
+  deleteUser,
+  saveImportStatus,
+  saveNewManualProduct,
+  deleteNewManualProduct,
+  clearNewManualProductsList,
+  syncUserCart,
+  saveUserCart
+} from './lib/firebase';
 
 type TabType = 'scanner' | 'replenishment' | 'orders' | 'new-product';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('scanner');
 
-  // Users list state
-  const [users, setUsers] = useState<AppUser[]>([
-    { nombre: "Administrador Depósito", legajo: "admin", clave: "admin", rol: "ADMIN" },
-    { nombre: "Operador Turno Mañana", legajo: "1001", clave: "1234", rol: "USUARIO" }
-  ]);
+  // Real-time states synced from Firestore
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [newManualProducts, setNewManualProducts] = useState<Product[]>([]);
+  const [importStatus, setImportStatus] = useState<ImportStatus>({
+    general: { loaded: false, fileName: '', date: '', count: 0 },
+    compra: { loaded: false, fileName: '', date: '', count: 0 },
+    venta: { loaded: false, fileName: '', date: '', count: 0 },
+  });
 
-  // Logged-in user state
+  // Logged-in user session state (persisted locally so they stay logged in in their active tab)
   const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
     const saved = localStorage.getItem('maestro_current_user');
     if (saved) {
@@ -78,13 +80,28 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Persist currentUser in localStorage for page refresh persistence
+  // Seed and establish real-time Firestore subscriptions on mount
   useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('maestro_current_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('maestro_current_user');
-    }
+    // 1. Run seed check (seeds initial demo database if Firestore collections are empty)
+    seedInitialDataIfEmpty();
+
+    // 2. Subscribe to real-time updates
+    const unsubscribeProducts = syncProducts(setProducts);
+    const unsubscribeUsers = syncUsers(setUsers);
+    const unsubscribeStatus = syncImportStatus(setImportStatus);
+    const unsubscribeManual = syncNewManualProducts(setNewManualProducts);
+
+    return () => {
+      unsubscribeProducts();
+      unsubscribeUsers();
+      unsubscribeStatus();
+      unsubscribeManual();
+    };
+  }, []);
+
+  // Persist currentUser local session
+  useEffect(() => {
+    localStorage.setItem('maestro_current_user', JSON.stringify(currentUser));
   }, [currentUser]);
 
   const handleLoginSubmit = (e: React.FormEvent) => {
@@ -98,7 +115,7 @@ export default function App() {
       return;
     }
 
-    // Robust comparison: check actual saved password or default fallback (supporting case-insensitive match for warehouse environments/caps lock)
+    // Robust comparison: check actual saved password or default fallback
     const isCorrectClave = 
       foundUser.clave === cleanClave || 
       foundUser.clave.trim() === cleanClave ||
@@ -120,114 +137,52 @@ export default function App() {
     setShowPassword(false);
   };
 
-  const [products, setProducts] = useState<Product[]>(mockProducts);
-  
-  const [importStatus, setImportStatus] = useState<ImportStatus>({
-    general: { loaded: true, fileName: 'Catalogo_Demo_Inicial.csv', date: '2025-12-10 14:00', count: mockProducts.length },
-    compra: { loaded: true, fileName: 'Compras_Demo_Inicial.csv', date: '2025-12-10 14:00', count: mockProducts.reduce((sum, p) => sum + (p.compraTotal > 0 ? 1 : 0), 0) },
-    venta: { loaded: true, fileName: 'Ventas_Demo_Inicial.csv', date: '2025-12-10 14:00', count: mockProducts.reduce((sum, p) => sum + p.ventas.length, 0) },
-  });
-
   const [selectedProductForReplenishment, setSelectedProductForReplenishment] = useState<Product | null>(null);
-  
-  // Separate list/database for manually added new products to allow distinct export
-  const [newManualProducts, setNewManualProducts] = useState<Product[]>([]);
+  const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
 
-  // Cart state - loaded and saved in Cloud per-user
+  // Keep scannedProduct synced with the latest data from the products list (Firestore live snapshot)
+  useEffect(() => {
+    if (products.length > 0) {
+      if (scannedProduct) {
+        const updated = products.find(p => p.codigoProducto === scannedProduct.codigoProducto);
+        if (updated) {
+          if (
+            updated.compraTotal !== scannedProduct.compraTotal ||
+            updated.ventaTotal !== scannedProduct.ventaTotal ||
+            updated.precioLista !== scannedProduct.precioLista ||
+            updated.descripcion !== scannedProduct.descripcion ||
+            JSON.stringify(updated.ventasBreakdown) !== JSON.stringify(scannedProduct.ventasBreakdown) ||
+            updated.fotoBase64 !== scannedProduct.fotoBase64 ||
+            updated.comentarioCorto !== scannedProduct.comentarioCorto
+          ) {
+            setScannedProduct(updated);
+          }
+        } else {
+          setScannedProduct(products[0]);
+        }
+      } else {
+        setScannedProduct(products[0]);
+      }
+    }
+  }, [products]);
+
+  // Cart state - synchronized per-user in Firestore
   const [savedQuantities, setSavedQuantities] = useState<Record<string, number>>({});
   const [savedOrder, setSavedOrder] = useState<OrderItem[]>([]);
 
-  // On mount, initialize Firestore and subscribe to all shared states
-  useEffect(() => {
-    // Boot Firestore collections if needed
-    initUsersIfNeeded();
-    initProductsIfNeeded();
-    initImportStatusIfNeeded();
-
-    // Subscriptions
-    const unsubUsers = subscribeUsers((list) => {
-      setUsers(list);
-    });
-
-    const unsubProducts = subscribeProducts((list) => {
-      setProducts(list);
-    });
-
-    const unsubNewManual = subscribeNewManualProducts((list) => {
-      setNewManualProducts(list);
-    });
-
-    const unsubImportStatus = subscribeImportStatus((status) => {
-      setImportStatus(status);
-    });
-
-    return () => {
-      unsubUsers();
-      unsubProducts();
-      unsubNewManual();
-      unsubImportStatus();
-    };
-  }, []);
-
-  // Refs to prevent recursive write loops for user cart
-  const incomingCartRef = useRef<string>('');
-
-  useEffect(() => {
-    if (!currentUser) {
-      setSavedQuantities({});
-      setSavedOrder([]);
-      return;
-    }
-
-    const legajo = currentUser.legajo;
-
-    // Subscribe to this user's quantities
-    const unsubQty = subscribeSavedQuantities(legajo, (qty) => {
-      const qtyStr = JSON.stringify(qty);
-      if (qtyStr !== JSON.stringify(savedQuantities)) {
-        incomingCartRef.current = qtyStr;
-        setSavedQuantities(qty);
-      }
-    });
-
-    // Subscribe to this user's order items
-    const unsubOrder = subscribeSavedOrder(legajo, (order) => {
-      const orderStr = JSON.stringify(order);
-      if (orderStr !== JSON.stringify(savedOrder)) {
-        incomingCartRef.current = orderStr;
-        setSavedOrder(order);
-      }
-    });
-
-    return () => {
-      unsubQty();
-      unsubOrder();
-    };
-  }, [currentUser]);
-
-  // Sync state changes back to Firestore (debounced to avoid over-writing)
+  // Synchronize cart state from Firestore in real-time
   useEffect(() => {
     if (!currentUser) return;
-    
-    // Check if the change came from our local user interaction or Firestore listener
-    const currentQtyStr = JSON.stringify(savedQuantities);
-    const currentOrderStr = JSON.stringify(savedOrder);
-    
-    // Avoid writing back if it is exactly what was just received from Firestore
-    if (incomingCartRef.current === currentQtyStr || incomingCartRef.current === currentOrderStr) {
-      if (incomingCartRef.current === currentQtyStr) {
-        incomingCartRef.current = '';
-      }
-      return;
-    }
 
-    const timeout = setTimeout(() => {
-      saveUserCartInCloud(currentUser.legajo, savedQuantities, savedOrder)
-        .catch(err => console.error("Error updating cart in cloud", err));
-    }, 500);
+    const unsubscribeCart = syncUserCart(currentUser.legajo, (cartData) => {
+      setSavedQuantities(cartData.savedQuantities);
+      setSavedOrder(cartData.savedOrder);
+    });
 
-    return () => clearTimeout(timeout);
-  }, [savedQuantities, savedOrder, currentUser]);
+    return () => {
+      unsubscribeCart();
+    };
+  }, [currentUser]);
 
   // Custom confirmation modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -245,32 +200,37 @@ export default function App() {
     onConfirm: () => {},
   });
 
-  // Handlers for manual additions and status updates
+  // Handlers for manual additions and status updates (linked to Centralized Firestore)
   const handleAddProduct = async (newProduct: Product) => {
-    await saveProductInCloud(newProduct);
-    await saveNewManualProductInCloud(newProduct);
+    if (currentUser?.rol !== 'ADMIN') return;
+    try {
+      await saveProduct(newProduct);
+      await saveNewManualProduct(newProduct);
 
-    // Update General file count in status
-    const nowStr = new Date().toLocaleString('es-AR', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-    
-    const updatedStatus: ImportStatus = {
-      ...importStatus,
-      general: {
-        ...importStatus.general,
-        count: importStatus.general.count + 1,
-        date: nowStr
-      }
-    };
-    await saveImportStatusInCloud(updatedStatus);
+      // Update General file count in status
+      const nowStr = new Date().toLocaleString('es-AR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      const updatedStatus = {
+        ...importStatus,
+        general: {
+          ...importStatus.general,
+          count: importStatus.general.count + 1,
+          date: nowStr
+        }
+      };
+      await saveImportStatus(updatedStatus);
+    } catch (error) {
+      console.error("Error saving manual product:", error);
+    }
   };
 
   const handleClearNewManualProducts = () => {
+    if (currentUser?.rol !== 'ADMIN') return;
     setConfirmModal({
       isOpen: true,
       title: 'Vaciar Base de Productos Nuevos',
@@ -279,12 +239,21 @@ export default function App() {
       cancelText: 'Cancelar',
       isDanger: true,
       onConfirm: async () => {
-        await clearAllNewManualProductsFromCloud(newManualProducts);
+        try {
+          const manualSkus = new Set<string>(newManualProducts.map(p => p.codigoProducto));
+          for (const sku of manualSkus) {
+            await deleteProduct(sku);
+          }
+          await clearNewManualProductsList(newManualProducts);
+        } catch (error) {
+          console.error("Error clearing manual products:", error);
+        }
       }
     });
   };
 
   const handleDeleteIndividualProduct = (codigoProducto: string) => {
+    if (currentUser?.rol !== 'ADMIN') return;
     const productToDelete = newManualProducts.find(p => p.codigoProducto === codigoProducto);
     if (!productToDelete) return;
 
@@ -296,13 +265,18 @@ export default function App() {
       cancelText: 'Cancelar',
       isDanger: true,
       onConfirm: async () => {
-        await deleteProductFromCloud(codigoProducto);
-        await deleteNewManualProductFromCloud(codigoProducto);
+        try {
+          await deleteProduct(codigoProducto);
+          await deleteNewManualProduct(codigoProducto);
+        } catch (error) {
+          console.error("Error deleting individual product:", error);
+        }
       }
     });
   };
 
   const handleUpdateImportStatus = async (type: 'GENERAL' | 'COMPRA' | 'VENTA', fileName: string, count: number) => {
+    if (currentUser?.rol !== 'ADMIN') return;
     const nowStr = new Date().toLocaleString('es-AR', {
       year: 'numeric',
       month: '2-digit',
@@ -312,7 +286,7 @@ export default function App() {
     });
 
     const key = type === 'GENERAL' ? 'general' : type === 'COMPRA' ? 'compra' : 'venta';
-    const updatedStatus: ImportStatus = {
+    const updatedStatus = {
       ...importStatus,
       [key]: {
         loaded: true,
@@ -321,10 +295,15 @@ export default function App() {
         count
       }
     };
-    await saveImportStatusInCloud(updatedStatus);
+    try {
+      await saveImportStatus(updatedStatus);
+    } catch (error) {
+      console.error("Error saving import status:", error);
+    }
   };
 
   const handleResetToDemo = () => {
+    if (currentUser?.rol !== 'ADMIN') return;
     setConfirmModal({
       isOpen: true,
       title: 'Restablecer Datos de Demostración',
@@ -333,21 +312,59 @@ export default function App() {
       cancelText: 'Cancelar',
       isDanger: true,
       onConfirm: async () => {
-        await overwriteProductsInCloud(mockProducts);
-        await clearAllNewManualProductsFromCloud(newManualProducts);
-        
-        const initialProductCount = mockProducts.length;
-        const initialCompraCount = mockProducts.reduce((sum, p) => sum + (p.compraTotal > 0 ? 1 : 0), 0);
-        const initialVentaCount = mockProducts.reduce((sum, p) => sum + p.ventas.length, 0);
+        try {
+          await clearNewManualProductsList(newManualProducts);
+          await bulkSaveProducts(mockProducts, true);
+          
+          const initialProductCount = mockProducts.length;
+          const initialCompraCount = mockProducts.reduce((sum, p) => sum + (p.compraTotal > 0 ? 1 : 0), 0);
+          const initialVentaCount = mockProducts.reduce((sum, p) => sum + p.ventas.length, 0);
 
-        const resetStatus: ImportStatus = {
-          general: { loaded: true, fileName: 'Catalogo_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialProductCount },
-          compra: { loaded: true, fileName: 'Compras_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialCompraCount },
-          venta: { loaded: true, fileName: 'Ventas_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialVentaCount },
-        };
-        await saveImportStatusInCloud(resetStatus);
+          const status: ImportStatus = {
+            general: { loaded: true, fileName: 'Catalogo_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialProductCount },
+            compra: { loaded: true, fileName: 'Compras_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialCompraCount },
+            venta: { loaded: true, fileName: 'Ventas_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialVentaCount },
+          };
+          await saveImportStatus(status);
+        } catch (error) {
+          console.error("Error resetting to demo data:", error);
+        }
       }
     });
+  };
+
+  const handleUpdateUsers = async (newUsersList: AppUser[]) => {
+    if (currentUser?.rol !== 'ADMIN') return;
+    try {
+      const existingLegajos = new Set(users.map(u => u.legajo));
+      const newListLegajos = new Set(newUsersList.map(u => u.legajo));
+
+      // Deletions
+      for (const u of users) {
+        if (!newListLegajos.has(u.legajo)) {
+          await deleteUser(u.legajo);
+        }
+      }
+
+      // Additions & updates
+      for (const u of newUsersList) {
+        const existing = users.find(ex => ex.legajo === u.legajo);
+        if (!existing || existing.nombre !== u.nombre || existing.clave !== u.clave || existing.rol !== u.rol) {
+          await saveUser(u);
+        }
+      }
+    } catch (error) {
+      console.error("Error updating users:", error);
+    }
+  };
+
+  const handleImportProducts = async (importedProductsList: Product[]) => {
+    if (currentUser?.rol !== 'ADMIN') return;
+    try {
+      await bulkSaveProducts(importedProductsList, true);
+    } catch (error) {
+      console.error("Error uploading imported products list:", error);
+    }
   };
 
   // Navigation handlers
@@ -356,11 +373,29 @@ export default function App() {
     setActiveTab('replenishment');
   };
 
-  const handleSaveOrder = (items: OrderItem[]) => {
-    setSavedOrder(items);
+  const handleUpdateQuantities = async (newQuantities: Record<string, number>) => {
+    setSavedQuantities(newQuantities);
+    if (currentUser) {
+      try {
+        await saveUserCart(currentUser.legajo, newQuantities, savedOrder);
+      } catch (error) {
+        console.error("Error saving user cart quantities:", error);
+      }
+    }
   };
 
-  const handleUpdateQuantityFromSummary = (code: string, qty: number) => {
+  const handleSaveOrder = async (items: OrderItem[]) => {
+    setSavedOrder(items);
+    if (currentUser) {
+      try {
+        await saveUserCart(currentUser.legajo, savedQuantities, items);
+      } catch (error) {
+        console.error("Error saving user cart order:", error);
+      }
+    }
+  };
+
+  const handleUpdateQuantityFromSummary = async (code: string, qty: number) => {
     const updatedQuantities = { ...savedQuantities };
     if (qty <= 0) {
       delete updatedQuantities[code];
@@ -374,21 +409,26 @@ export default function App() {
       .map(item => item.codigoProducto === code ? { ...item, cantidadPedir: qty } : item)
       .filter(item => item.cantidadPedir > 0);
     setSavedOrder(updatedOrder);
-  };
 
-  const handleClearOrder = () => {
-    setSavedQuantities({});
-    setSavedOrder([]);
-  };
-
-  const handleUpdateUsers = async (updatedUsers: AppUser[]) => {
-    for (const u of updatedUsers) {
-      await saveUserInCloud(u);
+    if (currentUser) {
+      try {
+        await saveUserCart(currentUser.legajo, updatedQuantities, updatedOrder);
+      } catch (error) {
+        console.error("Error saving user cart summary update:", error);
+      }
     }
   };
 
-  const handleImportProducts = async (importedList: Product[]) => {
-    await overwriteProductsInCloud(importedList);
+  const handleClearOrder = async () => {
+    setSavedQuantities({});
+    setSavedOrder([]);
+    if (currentUser) {
+      try {
+        await saveUserCart(currentUser.legajo, {}, []);
+      } catch (error) {
+        console.error("Error clearing user cart:", error);
+      }
+    }
   };
 
   // The product database is shared by all users, including any new manual additions
@@ -673,7 +713,12 @@ export default function App() {
               exit={{ x: 150, opacity: 0 }}
               transition={{ duration: 0.25, ease: "easeInOut" }}
             >
-              <SkuScanner products={mainProducts} onSelectProduct={handleSelectProductForReplenishment} />
+              <SkuScanner 
+                products={mainProducts} 
+                selectedProduct={scannedProduct}
+                onSelectProduct={handleSelectProductForReplenishment} 
+                onSelectScannedProduct={setScannedProduct}
+              />
             </motion.div>
           )}
 
@@ -690,7 +735,7 @@ export default function App() {
                 initialSelectedProduct={selectedProductForReplenishment}
                 onSaveOrder={handleSaveOrder}
                 savedQuantities={savedQuantities}
-                onUpdateQuantities={setSavedQuantities}
+                onUpdateQuantities={handleUpdateQuantities}
                 onImportProducts={handleImportProducts}
                 onUpdateImportStatus={handleUpdateImportStatus}
                 currentUser={currentUser}
