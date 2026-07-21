@@ -174,7 +174,7 @@ export default function NewProductManager({
   const streamRef = useRef<MediaStream | null>(null);
 
   // Derive unique suppliers dynamically
-  const uniqueSuppliers = Array.from(new Set(products.map(p => p.proveedor))).filter(Boolean).sort();
+  const uniqueSuppliers = Array.from(new Set(products.map(p => (p.proveedor || '').trim().toUpperCase()))).filter(Boolean).sort();
 
   // Auto-generate unique SKU when opening the modal
   const openModal = () => {
@@ -318,7 +318,7 @@ export default function NewProductManager({
     }
 
     // Parse precioLista handling Argentinian comma
-    let rawPrice = precioLista.trim();
+    let rawPrice = precioLista.trim().replace(/[$€\s]/g, '');
     if (rawPrice.includes('.') && rawPrice.includes(',')) {
       if (rawPrice.lastIndexOf(',') > rawPrice.lastIndexOf('.')) {
         rawPrice = rawPrice.replace(/\./g, '').replace(/,/g, '.');
@@ -327,6 +327,12 @@ export default function NewProductManager({
       }
     } else if (rawPrice.includes(',')) {
       rawPrice = rawPrice.replace(/,/g, '.');
+    } else if (rawPrice.includes('.')) {
+      const dotCount = (rawPrice.match(/\./g) || []).length;
+      const endsWithThreeDigitsAfterDot = /\.\d{3}$/.test(rawPrice);
+      if (dotCount > 1 || endsWithThreeDigitsAfterDot) {
+        rawPrice = rawPrice.replace(/\./g, '');
+      }
     }
     const cleanPrice = parseFloat(rawPrice.replace(/[^0-9.-]+/g, ''));
     if (isNaN(cleanPrice) || cleanPrice < 0) {

@@ -32,7 +32,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
   }, [selectedSupplier]);
 
   // Unique suppliers list derived dynamically from products state
-  const uniqueSuppliers = Array.from(new Set(products.map(p => p.proveedor))).sort();
+  const uniqueSuppliers = Array.from(new Set(products.map(p => (p.proveedor || '').trim().toUpperCase()))).filter(Boolean).sort();
 
   // Play a scanner beep sound using Web Audio API (no external asset needed)
   const playBeep = (type: 'success' | 'error') => {
@@ -75,7 +75,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
     let filtered = products;
 
     if (selectedSupplier !== 'ALL') {
-      filtered = filtered.filter(p => p.proveedor === selectedSupplier);
+      filtered = filtered.filter(p => (p.proveedor || '').trim().toUpperCase() === selectedSupplier.trim().toUpperCase());
     }
 
     if (searchQuery.trim() === '') {
@@ -223,7 +223,7 @@ export default function SkuScanner({ products, onSelectProduct }: SkuScannerProp
                 value={selectedSupplier}
                 onChange={(e) => {
                   setSelectedSupplier(e.target.value);
-                  const supplierProds = products.filter(p => p.proveedor === e.target.value);
+                  const supplierProds = products.filter(p => (p.proveedor || '').trim().toUpperCase() === e.target.value.trim().toUpperCase());
                   if (e.target.value !== 'ALL' && supplierProds.length > 0) {
                     setSelectedProduct(supplierProds[0]);
                   }

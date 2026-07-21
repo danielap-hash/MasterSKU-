@@ -74,7 +74,7 @@ export default function ReplenishmentList({
   const [importError, setImportError] = useState('');
 
   // Unique suppliers list derived dynamically from products state
-  const uniqueSuppliers = Array.from(new Set(products.map(p => p.proveedor))).sort();
+  const uniqueSuppliers = Array.from(new Set(products.map(p => (p.proveedor || '').trim().toUpperCase()))).filter(Boolean).sort();
 
   // Initialize quantities from parent state or mock values
   useEffect(() => {
@@ -196,7 +196,7 @@ export default function ReplenishmentList({
       // Supplier filter: If a specific supplier is selected, show all products belonging to that supplier (even if they don't have active transactions yet)
       const matchesSupplier = selectedSupplier === 'ALL' 
         ? true 
-        : (p.proveedor === selectedSupplier);
+        : ((p.proveedor || '').trim().toUpperCase() === selectedSupplier.trim().toUpperCase());
 
       // Lifespan filter
       let matchesLifespan = true;
@@ -390,7 +390,8 @@ export default function ReplenishmentList({
           };
 
           const getNum = (field: string, fallback: number = 0): number => {
-            let val = getVal(field).trim();
+            let val = getVal(field).trim().replace(/[$€\s]/g, '');
+            if (!val) return fallback;
             if (val.includes('.') && val.includes(',')) {
               if (val.lastIndexOf(',') > val.lastIndexOf('.')) {
                 val = val.replace(/\./g, '').replace(/,/g, '.');
@@ -399,6 +400,12 @@ export default function ReplenishmentList({
               }
             } else if (val.includes(',')) {
               val = val.replace(/,/g, '.');
+            } else if (val.includes('.')) {
+              const dotCount = (val.match(/\./g) || []).length;
+              const endsWithThreeDigitsAfterDot = /\.\d{3}$/.test(val);
+              if (dotCount > 1 || endsWithThreeDigitsAfterDot) {
+                val = val.replace(/\./g, '');
+              }
             }
             const parsed = parseFloat(val.replace(/[^0-9.-]+/g, ''));
             return isNaN(parsed) ? fallback : parsed;

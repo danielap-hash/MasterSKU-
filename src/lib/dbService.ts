@@ -250,14 +250,6 @@ export function subscribeProducts(callback: (products: Product[]) => void) {
           }
         });
 
-        // Safeguard: If local cache is richer, don't let a smaller/empty cloud snapshot overwrite it
-        const localList = getLocalCache<Product[]>(CACHE_PRODUCTS, []);
-        if (localList.length > mergedList.length) {
-          console.log("Preserving richer local cache:", localList.length, "vs cloud:", mergedList.length);
-          callback(localList);
-          return;
-        }
-
         setLocalCache(CACHE_PRODUCTS, mergedList);
         updateConnectionStatus('connected');
         callback(mergedList);
