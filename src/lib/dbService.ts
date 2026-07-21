@@ -232,6 +232,15 @@ export function subscribeProducts(callback: (products: Product[]) => void) {
   
   return onSnapshot(colRef, 
     (snapshot) => {
+      if (currentStatus !== 'connected' && currentStatus !== 'offline') {
+        // If we are in quota limit or offline mode, preserve the user's newer local database
+        const local = getLocalCache<Product[]>(CACHE_PRODUCTS, []);
+        if (local.length > 0) {
+          callback(local);
+          return;
+        }
+      }
+
       if (!snapshot.empty) {
         const mergedList: Product[] = [];
         snapshot.docs.forEach((docSnap) => {
@@ -240,11 +249,25 @@ export function subscribeProducts(callback: (products: Product[]) => void) {
             mergedList.push(...data.products);
           }
         });
+
+        // Safeguard: If local cache is richer, don't let a smaller/empty cloud snapshot overwrite it
+        const localList = getLocalCache<Product[]>(CACHE_PRODUCTS, []);
+        if (localList.length > mergedList.length) {
+          console.log("Preserving richer local cache:", localList.length, "vs cloud:", mergedList.length);
+          callback(localList);
+          return;
+        }
+
         setLocalCache(CACHE_PRODUCTS, mergedList);
         updateConnectionStatus('connected');
         callback(mergedList);
       } else {
-        callback(mockProducts);
+        const local = getLocalCache<Product[]>(CACHE_PRODUCTS, []);
+        if (local.length > 0) {
+          callback(local);
+        } else {
+          callback(mockProducts);
+        }
       }
     },
     (error) => {
