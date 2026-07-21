@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import SkuScanner from './components/SkuScanner';
 import ReplenishmentList from './components/ReplenishmentList';
 import SavedOrders from './components/SavedOrders';
@@ -12,7 +12,6 @@ import {
   Calendar, 
   Battery, 
   Wifi, 
-  WifiOff,
   PlusCircle, 
   AlertTriangle,
   User,
@@ -27,40 +26,27 @@ import {
   EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  initUsersIfNeeded, 
-  subscribeUsers, 
-  saveUserInCloud,
-  initProductsIfNeeded,
-  subscribeProducts,
-  saveProductInCloud,
-  deleteProductFromCloud,
-  overwriteProductsInCloud,
-  subscribeNewManualProducts,
-  saveNewManualProductInCloud,
-  deleteNewManualProductFromCloud,
-  clearAllNewManualProductsFromCloud,
-  initImportStatusIfNeeded,
-  subscribeImportStatus,
-  saveImportStatusInCloud,
-  subscribeSavedOrder,
-  subscribeSavedQuantities,
-  saveUserCartInCloud,
-  subscribeConnectionState,
-  ConnectionStatus
-} from './lib/dbService';
 
 type TabType = 'scanner' | 'replenishment' | 'orders' | 'new-product';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('scanner');
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connected');
 
   // Users list state
-  const [users, setUsers] = useState<AppUser[]>([
-    { nombre: "Administrador Depósito", legajo: "admin", clave: "admin", rol: "ADMIN" },
-    { nombre: "Operador Turno Mañana", legajo: "1001", clave: "1234", rol: "USUARIO" }
-  ]);
+  const [users, setUsers] = useState<AppUser[]>(() => {
+    const saved = localStorage.getItem('maestro_users');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved users", e);
+      }
+    }
+    return [
+      { nombre: "Administrador Depósito", legajo: "admin", clave: "admin", rol: "ADMIN" },
+      { nombre: "Operador Turno Mañana", legajo: "1001", clave: "1234", rol: "USUARIO" }
+    ];
+  });
 
   // Logged-in user state
   const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
@@ -82,13 +68,13 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Persist currentUser in localStorage for page refresh persistence
+  // Persist users & currentUser
   useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('maestro_current_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('maestro_current_user');
-    }
+    localStorage.setItem('maestro_users', JSON.stringify(users));
+  }, [users]);
+
+  useEffect(() => {
+    localStorage.setItem('maestro_current_user', JSON.stringify(currentUser));
   }, [currentUser]);
 
   const handleLoginSubmit = (e: React.FormEvent) => {
@@ -124,119 +110,94 @@ export default function App() {
     setShowPassword(false);
   };
 
-  const [products, setProducts] = useState<Product[]>(mockProducts);
+  const [products, setProducts] = useState<Product[]>(() => {
+    const saved = localStorage.getItem('maestro_products');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved products", e);
+      }
+    }
+    return mockProducts;
+  });
   
-  const [importStatus, setImportStatus] = useState<ImportStatus>({
-    general: { loaded: true, fileName: 'Catalogo_Demo_Inicial.csv', date: '2025-12-10 14:00', count: mockProducts.length },
-    compra: { loaded: true, fileName: 'Compras_Demo_Inicial.csv', date: '2025-12-10 14:00', count: mockProducts.reduce((sum, p) => sum + (p.compraTotal > 0 ? 1 : 0), 0) },
-    venta: { loaded: true, fileName: 'Ventas_Demo_Inicial.csv', date: '2025-12-10 14:00', count: mockProducts.reduce((sum, p) => sum + p.ventas.length, 0) },
+  const [importStatus, setImportStatus] = useState<ImportStatus>(() => {
+    const saved = localStorage.getItem('maestro_import_status');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved import status", e);
+      }
+    }
+    const initialProductCount = mockProducts.length;
+    const initialCompraCount = mockProducts.reduce((sum, p) => sum + (p.compraTotal > 0 ? 1 : 0), 0);
+    const initialVentaCount = mockProducts.reduce((sum, p) => sum + p.ventas.length, 0);
+
+    return {
+      general: { loaded: true, fileName: 'Catalogo_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialProductCount },
+      compra: { loaded: true, fileName: 'Compras_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialCompraCount },
+      venta: { loaded: true, fileName: 'Ventas_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialVentaCount },
+    };
   });
 
   const [selectedProductForReplenishment, setSelectedProductForReplenishment] = useState<Product | null>(null);
   
   // Separate list/database for manually added new products to allow distinct export
-  const [newManualProducts, setNewManualProducts] = useState<Product[]>([]);
+  const [newManualProducts, setNewManualProducts] = useState<Product[]>(() => {
+    const saved = localStorage.getItem('maestro_new_manual_products');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing saved manual products", e);
+      }
+    }
+    return [];
+  });
 
-  // Cart state - loaded and saved in Cloud per-user
+  // Cart state - loaded and saved per-user
   const [savedQuantities, setSavedQuantities] = useState<Record<string, number>>({});
   const [savedOrder, setSavedOrder] = useState<OrderItem[]>([]);
 
-  // On mount, initialize Firestore and subscribe to all shared states
+  // Load cart state from localStorage per user
   useEffect(() => {
-    // Boot Firestore collections if needed
-    initUsersIfNeeded().catch(err => console.warn("Handled users init failover gracefully", err));
-    initProductsIfNeeded().catch(err => console.warn("Handled products init failover gracefully", err));
-    initImportStatusIfNeeded().catch(err => console.warn("Handled import status init failover gracefully", err));
-
-    // Subscriptions
-    const unsubUsers = subscribeUsers((list) => {
-      setUsers(list);
-    });
-
-    const unsubProducts = subscribeProducts((list) => {
-      setProducts(list);
-    });
-
-    const unsubNewManual = subscribeNewManualProducts((list) => {
-      setNewManualProducts(list);
-    });
-
-    const unsubImportStatus = subscribeImportStatus((status) => {
-      setImportStatus(status);
-    });
-
-    const unsubConn = subscribeConnectionState((status) => {
-      setConnectionStatus(status);
-    });
-
-    return () => {
-      unsubUsers();
-      unsubProducts();
-      unsubNewManual();
-      unsubImportStatus();
-      unsubConn();
-    };
-  }, []);
-
-  // Refs to prevent recursive write loops for user cart
-  const incomingCartRef = useRef<string>('');
-
-  useEffect(() => {
-    if (!currentUser) {
+    const userLegajo = currentUser?.legajo || 'anonymous';
+    const savedQtyStr = localStorage.getItem(`maestro_cart_quantities_${userLegajo}`);
+    const savedOrderStr = localStorage.getItem(`maestro_cart_order_${userLegajo}`);
+    
+    if (savedQtyStr) {
+      try {
+        setSavedQuantities(JSON.parse(savedQtyStr));
+      } catch (e) {
+        setSavedQuantities({});
+      }
+    } else {
       setSavedQuantities({});
-      setSavedOrder([]);
-      return;
     }
 
-    const legajo = currentUser.legajo;
-
-    // Subscribe to this user's quantities
-    const unsubQty = subscribeSavedQuantities(legajo, (qty) => {
-      const qtyStr = JSON.stringify(qty);
-      if (qtyStr !== JSON.stringify(savedQuantities)) {
-        incomingCartRef.current = qtyStr;
-        setSavedQuantities(qty);
+    if (savedOrderStr) {
+      try {
+        setSavedOrder(JSON.parse(savedOrderStr));
+      } catch (e) {
+        setSavedOrder([]);
       }
-    });
-
-    // Subscribe to this user's order items
-    const unsubOrder = subscribeSavedOrder(legajo, (order) => {
-      const orderStr = JSON.stringify(order);
-      if (orderStr !== JSON.stringify(savedOrder)) {
-        incomingCartRef.current = orderStr;
-        setSavedOrder(order);
-      }
-    });
-
-    return () => {
-      unsubQty();
-      unsubOrder();
-    };
+    } else {
+      setSavedOrder([]);
+    }
   }, [currentUser]);
 
-  // Sync state changes back to Firestore (debounced to avoid over-writing)
+  // Sync to local storage per user
   useEffect(() => {
-    if (!currentUser) return;
-    
-    // Check if the change came from our local user interaction or Firestore listener
-    const currentQtyStr = JSON.stringify(savedQuantities);
-    const currentOrderStr = JSON.stringify(savedOrder);
-    
-    // Avoid writing back if it is exactly what was just received from Firestore
-    if (incomingCartRef.current === currentQtyStr || incomingCartRef.current === currentOrderStr) {
-      if (incomingCartRef.current === currentQtyStr) {
-        incomingCartRef.current = '';
-      }
-      return;
-    }
+    const userLegajo = currentUser?.legajo || 'anonymous';
+    localStorage.setItem(`maestro_cart_quantities_${userLegajo}`, JSON.stringify(savedQuantities));
+  }, [savedQuantities, currentUser]);
 
-    const timeout = setTimeout(() => {
-      saveUserCartInCloud(currentUser.legajo, savedQuantities, savedOrder)
-        .catch(err => console.warn("Gracefully handled cart save to cloud failover", err));
-    }, 500);
-
-    return () => clearTimeout(timeout);
-  }, [savedQuantities, savedOrder, currentUser]);
+  useEffect(() => {
+    const userLegajo = currentUser?.legajo || 'anonymous';
+    localStorage.setItem(`maestro_cart_order_${userLegajo}`, JSON.stringify(savedOrder));
+  }, [savedOrder, currentUser]);
 
   // Custom confirmation modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -254,29 +215,42 @@ export default function App() {
     onConfirm: () => {},
   });
 
+  // Sync to local storage
+  useEffect(() => {
+    localStorage.setItem('maestro_products', JSON.stringify(products));
+  }, [products]);
+
+  useEffect(() => {
+    localStorage.setItem('maestro_import_status', JSON.stringify(importStatus));
+  }, [importStatus]);
+
+  useEffect(() => {
+    localStorage.setItem('maestro_new_manual_products', JSON.stringify(newManualProducts));
+  }, [newManualProducts]);
+
   // Handlers for manual additions and status updates
-  const handleAddProduct = async (newProduct: Product) => {
-    await saveProductInCloud(newProduct);
-    await saveNewManualProductInCloud(newProduct);
+  const handleAddProduct = (newProduct: Product) => {
+    setProducts((prev) => [newProduct, ...prev]);
+    setNewManualProducts((prev) => [newProduct, ...prev]);
 
     // Update General file count in status
-    const nowStr = new Date().toLocaleString('es-AR', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
+    setImportStatus((prev) => {
+      const nowStr = new Date().toLocaleString('es-AR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      return {
+        ...prev,
+        general: {
+          ...prev.general,
+          count: prev.general.count + 1,
+          date: nowStr
+        }
+      };
     });
-    
-    const updatedStatus: ImportStatus = {
-      ...importStatus,
-      general: {
-        ...importStatus.general,
-        count: importStatus.general.count + 1,
-        date: nowStr
-      }
-    };
-    await saveImportStatusInCloud(updatedStatus);
   };
 
   const handleClearNewManualProducts = () => {
@@ -287,8 +261,10 @@ export default function App() {
       confirmText: 'Sí, Vaciar Base',
       cancelText: 'Cancelar',
       isDanger: true,
-      onConfirm: async () => {
-        await clearAllNewManualProductsFromCloud(newManualProducts);
+      onConfirm: () => {
+        const manualSkus = new Set(newManualProducts.map(p => p.codigoProducto));
+        setProducts(prev => prev.filter(p => !manualSkus.has(p.codigoProducto)));
+        setNewManualProducts([]);
       }
     });
   };
@@ -304,14 +280,14 @@ export default function App() {
       confirmText: 'Eliminar',
       cancelText: 'Cancelar',
       isDanger: true,
-      onConfirm: async () => {
-        await deleteProductFromCloud(codigoProducto);
-        await deleteNewManualProductFromCloud(codigoProducto);
+      onConfirm: () => {
+        setProducts(prev => prev.filter(p => p.codigoProducto !== codigoProducto));
+        setNewManualProducts(prev => prev.filter(p => p.codigoProducto !== codigoProducto));
       }
     });
   };
 
-  const handleUpdateImportStatus = async (type: 'GENERAL' | 'COMPRA' | 'VENTA', fileName: string, count: number) => {
+  const handleUpdateImportStatus = (type: 'GENERAL' | 'COMPRA' | 'VENTA', fileName: string, count: number) => {
     const nowStr = new Date().toLocaleString('es-AR', {
       year: 'numeric',
       month: '2-digit',
@@ -320,17 +296,18 @@ export default function App() {
       minute: '2-digit'
     });
 
-    const key = type === 'GENERAL' ? 'general' : type === 'COMPRA' ? 'compra' : 'venta';
-    const updatedStatus: ImportStatus = {
-      ...importStatus,
-      [key]: {
-        loaded: true,
-        fileName,
-        date: nowStr,
-        count
-      }
-    };
-    await saveImportStatusInCloud(updatedStatus);
+    setImportStatus((prev) => {
+      const key = type === 'GENERAL' ? 'general' : type === 'COMPRA' ? 'compra' : 'venta';
+      return {
+        ...prev,
+        [key]: {
+          loaded: true,
+          fileName,
+          date: nowStr,
+          count
+        }
+      };
+    });
   };
 
   const handleResetToDemo = () => {
@@ -341,20 +318,22 @@ export default function App() {
       confirmText: 'Sí, Restablecer',
       cancelText: 'Cancelar',
       isDanger: true,
-      onConfirm: async () => {
-        await overwriteProductsInCloud(mockProducts);
-        await clearAllNewManualProductsFromCloud(newManualProducts);
+      onConfirm: () => {
+        localStorage.removeItem('maestro_products');
+        localStorage.removeItem('maestro_import_status');
+        localStorage.removeItem('maestro_new_manual_products');
+        setProducts(mockProducts);
+        setNewManualProducts([]);
         
         const initialProductCount = mockProducts.length;
         const initialCompraCount = mockProducts.reduce((sum, p) => sum + (p.compraTotal > 0 ? 1 : 0), 0);
         const initialVentaCount = mockProducts.reduce((sum, p) => sum + p.ventas.length, 0);
 
-        const resetStatus: ImportStatus = {
+        setImportStatus({
           general: { loaded: true, fileName: 'Catalogo_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialProductCount },
           compra: { loaded: true, fileName: 'Compras_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialCompraCount },
           venta: { loaded: true, fileName: 'Ventas_Demo_Inicial.csv', date: '2025-12-10 14:00', count: initialVentaCount },
-        };
-        await saveImportStatusInCloud(resetStatus);
+        });
       }
     });
   };
@@ -388,16 +367,6 @@ export default function App() {
   const handleClearOrder = () => {
     setSavedQuantities({});
     setSavedOrder([]);
-  };
-
-  const handleUpdateUsers = async (updatedUsers: AppUser[]) => {
-    for (const u of updatedUsers) {
-      await saveUserInCloud(u);
-    }
-  };
-
-  const handleImportProducts = async (importedList: Product[]) => {
-    await overwriteProductsInCloud(importedList);
   };
 
   // The product database is shared by all users, including any new manual additions
@@ -562,22 +531,10 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {connectionStatus === 'connected' ? (
-              <div className="flex items-center gap-1.5 bg-slate-800/40 border border-emerald-900/30 px-2 py-1 rounded text-emerald-400" title="Base de datos en la nube sincronizada">
-                <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                <span className="font-bold text-[10px] tracking-wide">ONLINE (SINC)</span>
-              </div>
-            ) : connectionStatus === 'offline_quota' ? (
-              <div className="flex items-center gap-1.5 bg-amber-950/40 border border-amber-800/50 px-2 py-1 rounded text-amber-400 cursor-help" title="Se superó el límite de lectura de la nube hoy. Operando en modo de caché local seguro - todos los datos se guardan en el colector.">
-                <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-                <span className="font-bold text-[10px] tracking-wide text-amber-300">MODO LOCAL (CUOTA)</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 px-2 py-1 rounded text-slate-400" title="Sin conexión con el servidor. Operando en modo local seguro.">
-                <WifiOff className="w-3.5 h-3.5 text-slate-400" />
-                <span className="font-bold text-[10px] tracking-wide">MODO LOCAL</span>
-              </div>
-            )}
+            <div className="flex items-center gap-1">
+              <Wifi className="w-4 h-4 text-emerald-400" />
+              <span className="text-emerald-400 font-bold">ONLINE</span>
+            </div>
             <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
               <Battery className="w-4.5 h-4.5 text-emerald-400" />
               <span>100%</span>
@@ -712,7 +669,7 @@ export default function App() {
                 onSaveOrder={handleSaveOrder}
                 savedQuantities={savedQuantities}
                 onUpdateQuantities={setSavedQuantities}
-                onImportProducts={handleImportProducts}
+                onImportProducts={setProducts}
                 onUpdateImportStatus={handleUpdateImportStatus}
                 currentUser={currentUser}
               />
@@ -755,7 +712,7 @@ export default function App() {
                 onResetToDemo={handleResetToDemo}
                 currentUser={currentUser}
                 users={users}
-                onUpdateUsers={handleUpdateUsers}
+                onUpdateUsers={setUsers}
               />
             </motion.div>
           )}
